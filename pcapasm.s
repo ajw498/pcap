@@ -19,8 +19,19 @@ claimswi
 	MOV	r0, #2
 	ORR	r0, r0, #&100
 	ADR	r1, swihandler
-	SWI	&69 ;XOS_ClaimProcessorVector
+	SWI	&69+&20000 ;XOS_ClaimProcessorVector
+	MOVVC	r0, #0
 	STR	r1, oldswihandler
+	LDMFD	r13!, {pc}
+
+	EXPORT	|releaseswi|
+releaseswi
+	STMFD	r13!,{lr}
+	MOV	r0, #2
+	LDR	r1, oldswihandler
+	ADR	r2, swihandler
+	SWI	&69+&20000 ;XOS_ClaimProcessorVector
+	MOVVC	r0, #0
 	LDMFD	r13!, {pc}
 
 msg1	DCB	"Hi Mum",0

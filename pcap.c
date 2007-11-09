@@ -18,11 +18,12 @@ void swihandler(void);
 
 extern int oldswihandler;
 
-void claimswi(void);
+_kernel_oserror *claimswi(void);
+_kernel_oserror *releaseswi(void);
 
 _kernel_oserror *finalise(int fatal, int podule, void *private_word)
 {
-	return _swix(OS_ClaimProcessorVector, _INR(0,2), 0x002, oldswihandler, swihandler);
+	return releaseswi();
 }
 
 char *databuffer;
