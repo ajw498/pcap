@@ -21,15 +21,35 @@ extern int oldswihandler;
 _kernel_oserror *claimswi(void *wkspc);
 _kernel_oserror *releaseswi(void);
 
+
+typedef struct pcap_hsr_s {
+	unsigned magic_number;
+	unsigned version_major:16;
+	unsigned version_minor:16;
+	int thiszone;
+	unsigned sigfigs;
+	unsigned snaplen;
+	unsigned network;
+} pcap_hdr_t;
+
+typedef struct pcaprec_hdr_s {
+	unsigned ts_sec;
+	unsigned ts_usec;
+	unsigned incl_len;
+	unsigned orig_len;
+} pcaprec_hdr_t;
+
 static struct {
 	char *volatile writeptr;
 	char *volatile writeend;
 	volatile int overflow;
+	pcaprec_hdr_t rechdr;
 } workspace;
 
 static char *databuffer1;
 static char *databuffer2;
 static int databuffersize;
+static FILE *file;
 
 
 _kernel_oserror *callevery_handler(_kernel_swi_regs *r, void *pw)
@@ -40,6 +60,7 @@ _kernel_oserror *callevery_handler(_kernel_swi_regs *r, void *pw)
 	}
 //	semiprint("New data");
 	_swix(OS_AddCallBack, _INR(0, 1), callback, pw);
+	workspace.rechdr.ts_sec += 1;
 	return NULL;
 }
 
@@ -48,7 +69,6 @@ _kernel_oserror *callback_handler(_kernel_swi_regs *r, void *pw)
 	char *end;
 	char *start;
 	static volatile int sema = 0;
-	FILE *file;
 	_swix(OS_IntOff,0);
 	if (sema) {
 		_swix(OS_IntOn,0);
@@ -67,12 +87,10 @@ _kernel_oserror *callback_handler(_kernel_swi_regs *r, void *pw)
 		workspace.writeend = databuffer2 + databuffersize/2;
 	}
 	_swix(OS_IntOn,0);
-	file = fopen("@.data/pcap","ab");
 	if (file) {
 		fwrite(start, 1, end - start, file);
-		fclose(file); 
 	} else {
-		semiprint("File open failed");
+		semiprint("File not open");
 	}
 	sema = 0;
 	return NULL;
@@ -81,6 +99,7 @@ _kernel_oserror *callback_handler(_kernel_swi_regs *r, void *pw)
 _kernel_oserror *finalise(int fatal, int podule, void *private_word)
 {
 	_swix(OS_RemoveTickerEvent, _INR(0,1), callevery, private_word);
+	if (file) fclose(file);
 	return releaseswi();
 }
 
@@ -96,6 +115,24 @@ _kernel_oserror *initialise(const char *cmd_tail, int podule_base, void *private
 	databuffer2 = databuffer1 + databuffersize/2;
 	workspace.writeptr = databuffer1;
 	workspace.writeend = databuffer2;
+
+	file = fopen("@.data/pcap","wb");
+	if (file == NULL) {
+		semiprint("File open failed");
+	} else {
+		pcap_hdr_t hdr;
+		hdr.magic_number = 0xa1b2c3d4;
+		hdr.version_major = 2;
+		hdr.version_minor = 4;
+		hdr.thiszone = 0;
+		hdr.sigfigs = 0;
+		hdr.snaplen = databuffersize/2;
+		hdr.network = 1;
+		fwrite(&hdr, sizeof(hdr), 1, file);
+	}
+
+	workspace.rechdr.ts_sec = 0;
+	workspace.rechdr.ts_usec = 0;
 
 	_swix(OS_IntOff,0);
 	claimswi(&workspace);

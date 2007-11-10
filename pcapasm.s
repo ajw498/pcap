@@ -38,9 +38,28 @@ releaseswi
 	MOVVC	r0, #0
 	LDMFD	r13!, {pc}
 
-msg1	DCB	"Hi Mum",0
+msg1	DCB	"Msg 1",0
+	ALIGN
+msg2	DCB	"Msg 2",0
+	ALIGN
+msg3	DCB	"Msg 3",0
+	ALIGN
+msg4	DCB	"Msg 4",0
+	ALIGN
+msg5	DCB	"Msg 5",0
+	ALIGN
+msg6	DCB	"Msg 6",0
 	ALIGN
 
+	; a1 = dest
+	; a2 = src
+	; a3 = len (assumes len > 0)
+memcpy
+	LDRB	a4, [a2], #1
+	SUBS	a3, a3, #1
+	STRB	a4, [a1], #1
+	BGT	memcpy
+	MOV	pc, lr
 
 ;struct mbuf {
 ;    uint32_t m_next;
@@ -57,7 +76,6 @@ outputmbuf
 	LDR	a1, [a1, #12] ; Length
 	TEQ	a1, #0
 	LDMEQFD	sp!, {v1-v2, pc}
-	; FIXME check length
 	LDR	v1, =|workspace|
 	LDR	v1, [v1]
 	LDR	a4, [v1, #0] ; writeptr
@@ -71,7 +89,7 @@ outputmbuf
 	; a1 = len
 	; a4 = dest
 	MOV	a3, a1
-	SWI	&56ac8
+;	SWI	&56ac8
 copyloop
 	LDRB	v1, [a2], #1
 	SUBS	a3, a3, #1
@@ -105,12 +123,12 @@ chainend
 	MOV	a1, v2
 	LDMFD	sp!, {v1-v2, pc}
 
+dummymac
+	DCB	10,11,12,13,14,15
+	ALIGN
 
 	EXPORT	|oldswihandler|
-	EXPORT	|oldswihandler2|
 oldswihandler
-	DCD	0
-oldswihandler2
 	DCD	0
 
 	EXPORT	|swihandler|
@@ -161,11 +179,81 @@ swihandler
 	ADR	r0, msg1
 	SWI	&56ac5
 
+	LDR	v3, =|workspace|
+	LDR	v3, [v3]
+	LDR	v4, [v3, #0] ; writeptr
+	LDR	v5, [v3, #4] ; writeend
+	ADD	v6, v4, #16+14 ; record header + frame header lengths
+	CMP	v6, v5
+	BHS	hdroverflow
+	STR	v6, [v3, #0] ; writeptr
+
+	; Preamble
+;	MOV	a1, #0
+;	STRB	a1, [v4, #16]
+;	STRB	a1, [v4, #17]
+;	STRB	a1, [v4, #18]
+;	STRB	a1, [v4, #19]
+
 	; Reload original regs
 	LDMIB	sp,{r0-r5}
-	SWI	&56ac8
-	MOV	a1, r3 
+
+	; Copy destination address
+	ADD	a1, v4, #16
+	MOV	a2, r4
+	MOV	a3, #6
+	BL	memcpy
+
+	ADR	r0, msg2
+	SWI	&56ac5
+
+	; Copy source address
+	ADD	a1, v4, #22
+	ADR	a2, dummymac
+	MOV	a3, #6
+	BL	memcpy
+
+	ADR	r0, msg3
+	SWI	&56ac5
+
+	; Reload original regs
+	LDMIB	sp,{r0-r5}
+
+	; Frame type
+	STRB	a3, [v4, #29]
+	MOV	a3, a3, LSR#8
+	STRB	a3, [v4, #28]
+
+	ADR	r0, msg4
+	SWI	&56ac5
+
+	; Reload original regs
+	LDMIB	sp,{r0-r5}
+
+	MOV	a1, r3
 	BL	outputmbufchain
+	ADD	a1, a1, #14 ; Ethernet header length
+	STR	a1, [v3, #20] ; Store length in hdr
+	STR	a1, [v3, #24]
+
+	ADR	r0, msg5
+	SWI	&56ac5
+
+	; Copy hdr to output
+	MOV	a1, v4
+	ADD	a2, v3, #12
+	MOV	a3, #16
+	BL	memcpy
+
+	ADR	r0, msg6
+	SWI	&56ac5
+
+	B	exit
+
+hdroverflow
+	MOV	a2, #1
+	STR	a2, [v3, #8] ; overflow
+
 exit
 	LDMFD	sp!,{r0}
 	MSR	CPSR_cxsf, r0
