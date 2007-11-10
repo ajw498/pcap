@@ -50,6 +50,10 @@ msg5	DCB	"Msg 5",0
 	ALIGN
 msg6	DCB	"Msg 6",0
 	ALIGN
+msg7	DCB	"Filter SWI",0
+	ALIGN
+msg8	DCB	"RX call",0
+	ALIGN
 
 	; a1 = dest
 	; a2 = src
@@ -163,8 +167,13 @@ swihandler
 
 	LDR	r5, =&55484
 	TEQ	r0, r5
-;	SWI	&56ac8
-	BNE	exit
+	BEQ	txswi
+
+	LDR	r5, =&55485
+	TEQ	r0, r5
+	BEQ	filterswi
+
+	B	exit
 
 ;loop
 ;;	SWI	&56ac8
@@ -176,6 +185,8 @@ swihandler
 ;	BNE	loop
 ;	; Found match
 ;	; copy tx data from mbufs
+
+txswi
 	ADR	r0, msg1
 	SWI	&56ac5
 
@@ -230,6 +241,8 @@ swihandler
 	; Reload original regs
 	LDMIB	sp,{r0-r5}
 
+	;FIXME lists of chains
+
 	MOV	a1, r3
 	BL	outputmbufchain
 	ADD	a1, a1, #14 ; Ethernet header length
@@ -253,6 +266,67 @@ swihandler
 hdroverflow
 	MOV	a2, #1
 	STR	a2, [v3, #8] ; overflow
+	B	exit
+
+filterswi
+	ADR	r0, msg7
+	SWI	&56ac5
+
+	; Reload original regs
+	LDMIB	sp,{r0-r6}
+
+	; Only modify claims
+	TST	r0, #1
+	BNE	exit
+
+	SWI	&56ac8
+
+	LDR	a1, numclaims
+	MOV	a2, a1, LSL#3
+	ADD	a1, a1, #1
+	STR	a1, numclaims
+
+	LDR	a3, =claims
+	ADD	a3, a3, a2
+
+	; Save the original details
+	STR	v2, [a3, #0]
+	STR	v3, [a3, #4]
+	; Poke new details on to stack
+	STR	a3, [sp, #6*4]
+	ADR	a4, rxcall
+	STR	a4, [sp, #7*4]
+
+	B	exit
+
+
+rxcall
+	STMFD	sp!, {r0-r12,lr,pc}
+	LDR	a1, [r12, #0] ; New r12
+	STR	a1, [sp, #12*4] ; Poke onto stack
+	LDR	a2, [r12, #4] ; New pc
+	STR	a2, [sp, #14*4] ; Poke onto stack
+
+	SWI	&56ac8
+	ADR	a1, msg8
+	SWI	&56ac5
+
+	LDMFD	sp!, {r0-r12, lr, pc}
+
+
+numclaims
+	DCD	0
+claims
+	DCD	0
+	DCD	0
+	DCD	0
+	DCD	0
+	DCD	0
+	DCD	0
+	DCD	0
+	DCD	0
+	DCD	0
+	DCD	0
 
 exit
 	LDMFD	sp!,{r0}

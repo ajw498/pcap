@@ -14,10 +14,6 @@ void semiprint(char *msg);
 
 static _kernel_oserror ErrNoMem = {0x0, "Out of memory"};
 
-void swihandler(void);
-
-extern int oldswihandler;
-
 _kernel_oserror *claimswi(void *wkspc);
 _kernel_oserror *releaseswi(void);
 
@@ -136,7 +132,6 @@ _kernel_oserror *initialise(const char *cmd_tail, int podule_base, void *private
 
 	_swix(OS_IntOff,0);
 	claimswi(&workspace);
-	{char buf[256]; sprintf(buf, "new handler %p old %x",swihandler,oldswihandler);semiprint(buf);}
 	_swix(OS_IntOn,0);
 
 	_swix(OS_CallEvery, _INR(0,2), 1, callevery, private_word);
