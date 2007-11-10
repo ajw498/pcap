@@ -1,11 +1,13 @@
 
 
-        AREA    |C$$data|,DATA
+        AREA    |C$$data|,DATA,REL
 
 errbuf	DCD	&804d38
 errmess	%	256
 
-        AREA    |C$$code|,CODE,READONLY
+workspace	DCD	0
+
+        AREA    |C$$code|,CODE,REL,READONLY
 
 	EXPORT	|semiprint|
 semiprint
@@ -16,6 +18,8 @@ semiprint
 	EXPORT	|claimswi|
 claimswi
 	STMFD	r13!,{lr}
+	LDR	r1, =|workspace|
+	STR	r0, [r1]
 	MOV	r0, #2
 	ORR	r0, r0, #&100
 	ADR	r1, swihandler
@@ -37,11 +41,6 @@ releaseswi
 msg1	DCB	"Hi Mum",0
 	ALIGN
 
-	IMPORT	|databuffer|
-	IMPORT	|databuffersize|
-	IMPORT	|writeoffset|
-	IMPORT	|readoffset|
-	IMPORT	|overflow|
 
 ;struct mbuf {
 ;    uint32_t m_next;
@@ -59,18 +58,19 @@ outputmbuf
 	TEQ	a1, #0
 	LDMEQFD	sp!, {v1-v2, pc}
 	; FIXME check length
-	LDR	a4, =|databuffer|
-	LDR	v1, =|writeoffset|
-	LDR	a4, [a4]
-	LDR	v2, [v1]
+	LDR	v1, =|workspace|
+	LDR	v1, [v1]
+	LDR	a4, [v1, #0] ; databuffer
+	LDR	v2, [v1, #8] ; writeoffset
 	ADD	a4, a4, v2
 	ADD	v2, v2, a1
-	STR	v2, [v1]
+	STR	v2, [v1, #8] ; new writeoffset
 
 	; a2 = src
 	; a1 = len
 	; a4 = dests
 	MOV	a3, a1
+	SWI	&56ac8
 copyloop
 	LDRB	v1, [a2], #1
 	SUBS	a3, a3, #1
@@ -157,10 +157,10 @@ swihandler
 	; Reload original regs
 	LDMIB	sp,{r0-r5}
 	SWI	&56ac8
-
+	MOV	a1, r3 
+	BL	outputmbufchain
 exit
 	LDMFD	sp!,{r0}
-	BIC	r0, r0, #&10
 	MSR	CPSR_cxsf, r0
 	LDMFD	sp!,{r0-r12,lr}
 ;	SWI	&56ac6

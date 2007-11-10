@@ -18,7 +18,7 @@ void swihandler(void);
 
 extern int oldswihandler;
 
-_kernel_oserror *claimswi(void);
+_kernel_oserror *claimswi(void *wkspc);
 _kernel_oserror *releaseswi(void);
 
 _kernel_oserror *finalise(int fatal, int podule, void *private_word)
@@ -26,22 +26,26 @@ _kernel_oserror *finalise(int fatal, int podule, void *private_word)
 	return releaseswi();
 }
 
-char *databuffer;
-int databuffersize = 512*1024;
-int writeoffset = 0;
-int readoffset = 0;
-int overflow = 0;
+static struct {
+	char *databuffer;
+	int databuffersize;
+	int writeoffset;
+	int readoffset;
+	int overflow;
+} workspace;
 
 _kernel_oserror *initialise(const char *cmd_tail, int podule_base, void *private_word)
 {
 	(void)cmd_tail;
 	(void)podule_base;
 
-	databuffer = malloc(databuffersize);
-	if (databuffer == NULL) return &ErrNoMem;
+	workspace.databuffersize = 512*1024;
+	workspace.databuffer = malloc(workspace.databuffersize);
+	if (workspace.databuffer == NULL) return &ErrNoMem;
+	{char buf[256]; sprintf(buf, "databuffer addr %p",&workspace.databuffer);semiprint(buf);}
 
 	_swix(OS_IntOff,0);
-	claimswi();
+	claimswi(&workspace);
 	{char buf[256]; sprintf(buf, "new handler %p old %x",swihandler,oldswihandler);semiprint(buf);}
 	_swix(OS_IntOn,0);
 	return 0;
