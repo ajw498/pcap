@@ -60,15 +60,16 @@ outputmbuf
 	; FIXME check length
 	LDR	v1, =|workspace|
 	LDR	v1, [v1]
-	LDR	a4, [v1, #0] ; databuffer
-	LDR	v2, [v1, #8] ; writeoffset
-	ADD	a4, a4, v2
-	ADD	v2, v2, a1
-	STR	v2, [v1, #8] ; new writeoffset
+	LDR	a4, [v1, #0] ; writeptr
+	LDR	v2, [v1, #4] ; writeend
+	ADD	a3, a4, a1
+	CMP	a3, v2
+	BHS	overflow
+	STR	a3, [v1, #0] ; new writeptr
 
 	; a2 = src
 	; a1 = len
-	; a4 = dests
+	; a4 = dest
 	MOV	a3, a1
 	SWI	&56ac8
 copyloop
@@ -77,6 +78,12 @@ copyloop
 	STRB	v1, [a4], #1
 	BGT	copyloop
 
+	LDMFD	sp!, {v1-v2, pc}
+
+overflow
+	MOV	a2, #1
+	STR	a2, [v1, #8] ; overflow
+	MOV	a1, #0
 	LDMFD	sp!, {v1-v2, pc}
 
 ; a1 mbuf ptr

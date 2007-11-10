@@ -9,3 +9,4 @@ finalisation-code: finalise
 
 service-call-handler: service 0x9d
 
+generic-veneers: callevery/callevery_handler callback/callback_handler
