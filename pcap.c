@@ -35,11 +35,29 @@ typedef struct pcaprec_hdr_s {
 	unsigned orig_len;
 } pcaprec_hdr_t;
 
+struct dib {
+	unsigned dib_swibase;
+	char *dib_name;
+	unsigned dib_unit;
+	unsigned char *dib_address;
+	char *dib_module;
+	char *dib_location;
+	unsigned dib_slot;
+	unsigned dib_inquire;
+};
+
+struct drivers {
+	struct dib *dib;
+	struct drivers *next;
+};
+
 static struct {
 	char *volatile writeptr;
 	char *volatile writeend;
 	volatile int overflow;
 	pcaprec_hdr_t rechdr;
+	struct drivers *drivers;
+	void *oldswihandler;
 } workspace;
 
 static char *databuffer1;
@@ -84,7 +102,11 @@ _kernel_oserror *callback_handler(_kernel_swi_regs *r, void *pw)
 	}
 	_swix(OS_IntOn,0);
 	if (file) {
-		fwrite(start, 1, end - start, file);
+		if (workspace.overflow) {
+			semiprint("Overflow detected");
+		} else {
+			fwrite(start, 1, end - start, file);
+		}
 	} else {
 		semiprint("File not open");
 	}
@@ -112,6 +134,7 @@ _kernel_oserror *initialise(const char *cmd_tail, int podule_base, void *private
 	workspace.writeptr = databuffer1;
 	workspace.writeend = databuffer2;
 
+	remove("@.data/pcap");
 	file = fopen("@.data/pcap","wb");
 	if (file == NULL) {
 		semiprint("File open failed");
@@ -129,6 +152,7 @@ _kernel_oserror *initialise(const char *cmd_tail, int podule_base, void *private
 
 	workspace.rechdr.ts_sec = 0;
 	workspace.rechdr.ts_usec = 0;
+	workspace.drivers = NULL;
 
 	_swix(OS_IntOff,0);
 	claimswi(&workspace);
@@ -139,22 +163,29 @@ _kernel_oserror *initialise(const char *cmd_tail, int podule_base, void *private
 	return 0;
 }
 
-
-int swilist[20];
-int numswis = 0;
-
+/* Called only for Service_DCIDriverStatus */
 void service(int service_number,_kernel_swi_regs * r,void * pw)
 {
-	switch(service_number) {
-	case 0x9D: // Service_DCIDriverStatus
-		if (r->r[2]) {
-			// remove from list;
-		} else {
-			if (numswis >= 20) break;
-			{char buf[256]; sprintf(buf, "service call %x",*((int *)(r->r[0])));semiprint(buf);}
-			swilist[numswis++] = *((int *)(r->r[0])); //first word of dib
+	if (r->r[2]) {
+		/* Driver terminating, remove from list */
+		struct drivers *driver = workspace.drivers;
+		struct drivers **prev = &(workspace.drivers);
+		while (driver) {
+			if (driver->dib == (struct dib *)r->r[0]) {
+				*prev = driver->next;
+				free(driver);
+				break;
+			}
+			prev = &(driver->next);
+			driver = driver->next;
 		}
-		break;
+	} else {
+		struct drivers *driver = malloc(sizeof(struct drivers));
+		if (driver == NULL) return; /* Not much else we can do */
+
+		driver->dib = (struct dib *)r->r[0];
+		driver->next = workspace.drivers;
+		workspace.drivers = driver;
 	}
 }
 

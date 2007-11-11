@@ -1,9 +1,13 @@
 
+; Offsets within workspace struct
+WRITEPTR	EQU	0
+WRITEEND	EQU	4
+OVERFLOW	EQU	8
+RECHDR		EQU	12
+DRIVERS		EQU	28
+OLDSWIHANDLER	EQU	32
 
         AREA    |C$$data|,DATA,REL
-
-errbuf	DCD	&804d38
-errmess	%	256
 
 workspace	DCD	0
 
@@ -127,9 +131,6 @@ chainend
 	MOV	a1, v2
 	LDMFD	sp!, {v1-v2, pc}
 
-dummymac
-	DCB	10,11,12,13,14,15
-	ALIGN
 
 	EXPORT	|oldswihandler|
 oldswihandler
@@ -137,56 +138,55 @@ oldswihandler
 
 	EXPORT	|swihandler|
 
-	IMPORT	|swilist|
-	IMPORT	|numswis|
 swihandler
-;	SWI	&56ac7
 	STMFD	sp!,{r0-r12,lr}
 	MRS	r0, CPSR
 	STMFD	sp!,{r0}
-	LDR	r0, [r14, #-4]
-;	LDR	r1, [r14, #-4]
-;	LDR	r2, [r14, #0]
-;	MOV	r3, r14
+
+	LDR	v1, =|workspace|
+	LDR	v1, [v1]
+
+	; Load SWI number
+	LDR	v2, [r14, #-4]
+	BIC	v2, v2, #&FF000000
+	BIC	v2, v2, #&00020000 ; X bit
 
 
-;	LDR	r2, =|numswis|
-;	LDR	r1, =|swilist|
-;	LDR	r2, [r2]
-	BIC	r0, r0, #&FF000000
-	BIC	r0, r0, #&00020000 ; X bit
-;	BIC	r4, r0, #&3F
+	TEQ	v2, #&6F ; OS_CallASWI
+	MOVEQ	v2, r10
+	TEQ	v2, #&71 ; OS_CallASWIR12
+	MOVEQ	v2, r12
 
+	BIC	v2, v2, #&00020000 ; X bit
 
-	TEQ	r0, #&6F ; OS_CallASWI
-	MOVEQ	r0, r10
-	TEQ	r0, #&71 ; OS_CallASWIR12
-	MOVEQ	r0, r12
+	; Get the SWI chunk base
+	BIC	a1, v2, #&3F
 
-	BIC	r0, r0, #&00020000 ; X bit
+	LDR	a2, [v1, #DRIVERS]
+driverloop
+	TEQ	a2, #0
+	BEQ	swiexit
 
-	LDR	r5, =&55484
-	TEQ	r0, r5
+	LDR	a3, [a2, #0] ; DIB
+	LDR	a4, [a3, #0] ; SWI base
+	TEQ	a1, a4
+	BEQ	swibasefound
+
+	LDR	a2, [a2, #4] ; Next driver
+	B	driverloop
+
+swibasefound
+	LDR	a1, [a3, #12] ; Load MAC address from DIB
+	AND	a2, v2, #&3F ; Offset within SWI base
+	TEQ	a2, #4
 	BEQ	txswi
-
-	LDR	r5, =&55485
-	TEQ	r0, r5
+	TEQ	a2, #5
 	BEQ	filterswi
 
 	B	swiexit
 
-;loop
-;;	SWI	&56ac8
-;	SUBS	r2, r2, #1
-;	BLT	exit
-;	LDR	r3, [r1], #4
-;	SWI	&56ac8
-;	TEQ	r3, r4
-;	BNE	loop
-;	; Found match
-;	; copy tx data from mbufs
 
-; Transmit data
+; Transmit data SWI
 ; a1 = flags, bit 0 set if v2 is src addr
 ; a2 = unit number
 ; a3 = frame type
@@ -197,8 +197,9 @@ txswi
 	; Reload original regs
 	LDMIB	sp,{v1-v6}
 
+	; If source MAC address not supplied, use the one from the DIB
 	TST	v1, #1
-	LDREQ	v6, =|dummymac|
+	MOV	v6, a1
 
 txlistloop
 	MOV	a1, v3 ; frame type
