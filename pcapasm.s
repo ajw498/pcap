@@ -186,20 +186,29 @@ swihandler
 ;	; Found match
 ;	; copy tx data from mbufs
 
+; Transmit data
+; a1 = flags, bit 0 set if v2 is src addr
+; a2 = unit number
+; a3 = frame type
+; a4 = mbuf chains of data
+; v1 = dest h/w address
+; v2 = src h/w address
 txswi
 	; Reload original regs
-	LDMIB	sp,{r0-r6}
+	LDMIB	sp,{v1-v6}
 
-	MOV	a2, a4
-	TST	a1, #1
-	MOVNE	a4, v2
-	LDREQ	a4, =|dummymac|
-	MOV	a1, a3
-	MOV	a3, v1
+	TST	v1, #1
+	LDREQ	v6, =|dummymac|
+
+txlistloop
+	MOV	a1, v3 ; frame type
+	MOVS	a2, v4 ; mbuf chain
+	BEQ	swiexit
+	MOV	a3, v5 ; dest addr
+	MOV	a4, v6 ; src addr
 	BL	outputtxchain
-	;FIXME lists of chains
-
-	B	swiexit
+	LDR	v4, [v4, #4] ; next mbuf chain in list
+	B	txlistloop
 
 
 filterswi
