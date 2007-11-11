@@ -275,21 +275,43 @@ filterswi
 	B	exit
 
 
+exit
+	LDMFD	sp!,{r0}
+	MSR	CPSR_cxsf, r0
+	LDMFD	sp!,{r0-r12,lr}
+;	SWI	&56ac6
+	LDR	pc, oldswihandler
+
+
+
+; rx routine called directly from the DCI4 driver
+; a1 = ptr to dib
+; a2 = ptr to mbuf chains
+; r12 = private word
 rxcall
 	STMFD	sp!, {r0-r12,lr,pc}
+	MOV	v1, a2
+
 	LDR	a1, [r12, #0] ; New r12
 	STR	a1, [sp, #12*4] ; Poke onto stack
 	LDR	a2, [r12, #4] ; New pc
 	STR	a2, [sp, #14*4] ; Poke onto stack
 
-	SWI	&56ac8
-	ADR	a1, msg8
-	SWI	&56ac5
+rxlistloop
+	MOVS	a1, v1
+	BEQ	rxexit
+	LDR	v1, [v1, #4] ; next mbuf chain in list
+	BL	outputrxchain
+	B	rxlistloop
 
-	; Reload original reg
-	LDR	v1, [sp, #4]
+rxexit
+	LDMFD	sp!, {r0-r12, lr, pc}
 
-	; FIXME lists of chains
+
+; a1 = ptr to mbuf chain
+outputrxchain
+	STMFD	sp!, {v1-v6, lr}
+	MOV	v1, a1
 
 	LDR	v3, =|workspace|
 	LDR	v3, [v3]
@@ -300,18 +322,12 @@ rxcall
 	BHS	rxhdroverflow
 	STR	v6, [v3, #0] ; writeptr
 
-	ADR	r0, msg1
-	SWI	&56ac5
-
 	LDR	v2, [v1, #8] ; mbuf offset
-	SWI	&56ac8
 	ADD	v2, v1, v2
 	; v2 = rx header
 	; +8 src addr
 	; +16 dest addr
 	; +24 frame type
-
-	SWI	&56ac8
 
 	; Copy destination address
 	ADD	a1, v4, #16
@@ -319,17 +335,11 @@ rxcall
 	MOV	a3, #6
 	BL	memcpy
 
-	ADR	r0, msg2
-	SWI	&56ac5
-
 	; Copy source address
 	ADD	a1, v4, #22
 	ADD	a2, v2, #8
 	MOV	a3, #6
 	BL	memcpy
-
-	ADR	r0, msg3
-	SWI	&56ac5
 
 	; Frame type
 	LDR	a3, [v2, #24]
@@ -337,31 +347,25 @@ rxcall
 	LDR	a3, [v2, #25]
 	STRB	a3, [v4, #28]
 
-	ADR	r0, msg4
-	SWI	&56ac5
-
-	LDR	a1, [v1, #0] ; Next mbuf in chain
+	LDR	a1, [v1, #0] ; Next mbuf in chain, contains the payload
 	BL	outputmbufchain
 	ADD	a1, a1, #14 ; Ethernet header length
-	STR	a1, [v3, #20] ; Store length in hdr
+	STR	a1, [v3, #20] ; Store length in pcap record hdr
 	STR	a1, [v3, #24]
 
-	ADR	r0, msg5
-	SWI	&56ac5
-
-	; Copy hdr to output
+	; Copy pcap record hdr to output
 	MOV	a1, v4
 	ADD	a2, v3, #12
 	MOV	a3, #16
 	BL	memcpy
 
-rxexit
-	LDMFD	sp!, {r0-r12, lr, pc}
+	LDMFD	sp!, {v1-v6, pc}
 
 rxhdroverflow
 	MOV	a2, #1
 	STR	a2, [v3, #8] ; overflow
-	B	rxexit
+	LDMFD	sp!, {v1-v6, pc}
+
 
 numclaims
 	DCD	0
@@ -376,13 +380,6 @@ claims
 	DCD	0
 	DCD	0
 	DCD	0
-
-exit
-	LDMFD	sp!,{r0}
-	MSR	CPSR_cxsf, r0
-	LDMFD	sp!,{r0-r12,lr}
-;	SWI	&56ac6
-	LDR	pc, oldswihandler
 
 
         END
