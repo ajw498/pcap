@@ -173,7 +173,7 @@ swihandler
 	TEQ	r0, r5
 	BEQ	filterswi
 
-	B	exit
+	B	swiexit
 
 ;loop
 ;;	SWI	&56ac8
@@ -187,61 +187,20 @@ swihandler
 ;	; copy tx data from mbufs
 
 txswi
-	LDR	v3, =|workspace|
-	LDR	v3, [v3]
-	LDR	v4, [v3, #0] ; writeptr
-	LDR	v5, [v3, #4] ; writeend
-	ADD	v6, v4, #16+14 ; record header + frame header lengths
-	CMP	v6, v5
-	BHS	txhdroverflow
-	STR	v6, [v3, #0] ; writeptr
-
 	; Reload original regs
-	LDMIB	sp,{r0-r5}
+	LDMIB	sp,{r0-r6}
 
-	; Copy destination address
-	ADD	a1, v4, #16
-	MOV	a2, r4
-	MOV	a3, #6
-	BL	memcpy
-
-	; Copy source address
-	ADD	a1, v4, #22
-	ADR	a2, dummymac
-	MOV	a3, #6
-	BL	memcpy
-
-	; Reload original regs
-	LDMIB	sp,{r0-r5}
-
-	; Frame type
-	STRB	a3, [v4, #29]
-	MOV	a3, a3, LSR#8
-	STRB	a3, [v4, #28]
-
-	; Reload original regs
-	LDMIB	sp,{r0-r5}
-
+	MOV	a2, a4
+	TST	a1, #1
+	MOVNE	a4, v2
+	LDREQ	a4, =|dummymac|
+	MOV	a1, a3
+	MOV	a3, v1
+	BL	outputtxchain
 	;FIXME lists of chains
 
-	MOV	a1, r3
-	BL	outputmbufchain
-	ADD	a1, a1, #14 ; Ethernet header length
-	STR	a1, [v3, #20] ; Store length in hdr
-	STR	a1, [v3, #24]
+	B	swiexit
 
-	; Copy hdr to output
-	MOV	a1, v4
-	ADD	a2, v3, #12
-	MOV	a3, #16
-	BL	memcpy
-
-	B	exit
-
-txhdroverflow
-	MOV	a2, #1
-	STR	a2, [v3, #8] ; overflow
-	B	exit
 
 filterswi
 	ADR	r0, msg7
@@ -252,7 +211,7 @@ filterswi
 
 	; Only modify claims
 	TST	r0, #1
-	BNE	exit
+	BNE	swiexit
 
 	SWI	&56ac8
 
@@ -272,17 +231,66 @@ filterswi
 	ADR	a4, rxcall
 	STR	a4, [sp, #7*4]
 
-	B	exit
-
-
-exit
+swiexit
 	LDMFD	sp!,{r0}
 	MSR	CPSR_cxsf, r0
 	LDMFD	sp!,{r0-r12,lr}
-;	SWI	&56ac6
 	LDR	pc, oldswihandler
 
+; a1 = frame type
+; a2 = mbuf chain
+; a3 = dest addr
+; a4 = src addr
+outputtxchain
+	STMFD	sp!, {v1-v6, lr}
 
+	LDR	v3, =|workspace|
+	LDR	v3, [v3]
+	LDR	v4, [v3, #0] ; writeptr
+	LDR	v5, [v3, #4] ; writeend
+	ADD	v6, v4, #16+14 ; record header + frame header lengths
+	CMP	v6, v5
+	BHS	txhdroverflow
+	STR	v6, [v3, #0] ; writeptr
+
+	MOV	v1, a2
+	MOV	v2, a4
+
+	; Frame type
+	STRB	a1, [v4, #29]
+	MOV	a1, a1, LSR#8
+	STRB	a1, [v4, #28]
+
+	; Copy destination address
+	ADD	a1, v4, #16
+	MOV	a2, a3
+	MOV	a3, #6
+	BL	memcpy
+
+	; Copy source address
+	ADD	a1, v4, #22
+	ADR	a2, v2
+	MOV	a3, #6
+	BL	memcpy
+
+	MOV	a1, v1
+	BL	outputmbufchain
+	ADD	a1, a1, #14 ; Ethernet header length
+	STR	a1, [v3, #20] ; Store length in hdr
+	STR	a1, [v3, #24]
+
+	; Copy hdr to output
+	MOV	a1, v4
+	ADD	a2, v3, #12
+	MOV	a3, #16
+	BL	memcpy
+
+	LDMFD	sp!, {v1-v6, pc}
+
+txhdroverflow
+	MOV	a2, #1
+	STR	a2, [v3, #8] ; overflow
+	LDMFD	sp!, {v1-v6, pc}
 
 ; rx routine called directly from the DCI4 driver
 ; a1 = ptr to dib
