@@ -187,24 +187,14 @@ swihandler
 ;	; copy tx data from mbufs
 
 txswi
-	ADR	r0, msg1
-	SWI	&56ac5
-
 	LDR	v3, =|workspace|
 	LDR	v3, [v3]
 	LDR	v4, [v3, #0] ; writeptr
 	LDR	v5, [v3, #4] ; writeend
 	ADD	v6, v4, #16+14 ; record header + frame header lengths
 	CMP	v6, v5
-	BHS	hdroverflow
+	BHS	txhdroverflow
 	STR	v6, [v3, #0] ; writeptr
-
-	; Preamble
-;	MOV	a1, #0
-;	STRB	a1, [v4, #16]
-;	STRB	a1, [v4, #17]
-;	STRB	a1, [v4, #18]
-;	STRB	a1, [v4, #19]
 
 	; Reload original regs
 	LDMIB	sp,{r0-r5}
@@ -215,17 +205,11 @@ txswi
 	MOV	a3, #6
 	BL	memcpy
 
-	ADR	r0, msg2
-	SWI	&56ac5
-
 	; Copy source address
 	ADD	a1, v4, #22
 	ADR	a2, dummymac
 	MOV	a3, #6
 	BL	memcpy
-
-	ADR	r0, msg3
-	SWI	&56ac5
 
 	; Reload original regs
 	LDMIB	sp,{r0-r5}
@@ -234,9 +218,6 @@ txswi
 	STRB	a3, [v4, #29]
 	MOV	a3, a3, LSR#8
 	STRB	a3, [v4, #28]
-
-	ADR	r0, msg4
-	SWI	&56ac5
 
 	; Reload original regs
 	LDMIB	sp,{r0-r5}
@@ -249,21 +230,15 @@ txswi
 	STR	a1, [v3, #20] ; Store length in hdr
 	STR	a1, [v3, #24]
 
-	ADR	r0, msg5
-	SWI	&56ac5
-
 	; Copy hdr to output
 	MOV	a1, v4
 	ADD	a2, v3, #12
 	MOV	a3, #16
 	BL	memcpy
 
-	ADR	r0, msg6
-	SWI	&56ac5
-
 	B	exit
 
-hdroverflow
+txhdroverflow
 	MOV	a2, #1
 	STR	a2, [v3, #8] ; overflow
 	B	exit
@@ -311,8 +286,82 @@ rxcall
 	ADR	a1, msg8
 	SWI	&56ac5
 
+	; Reload original reg
+	LDR	v1, [sp, #4]
+
+	; FIXME lists of chains
+
+	LDR	v3, =|workspace|
+	LDR	v3, [v3]
+	LDR	v4, [v3, #0] ; writeptr
+	LDR	v5, [v3, #4] ; writeend
+	ADD	v6, v4, #16+14 ; record header + frame header lengths
+	CMP	v6, v5
+	BHS	rxhdroverflow
+	STR	v6, [v3, #0] ; writeptr
+
+	ADR	r0, msg1
+	SWI	&56ac5
+
+	LDR	v2, [v1, #8] ; mbuf offset
+	SWI	&56ac8
+	ADD	v2, v1, v2
+	; v2 = rx header
+	; +8 src addr
+	; +16 dest addr
+	; +24 frame type
+
+	SWI	&56ac8
+
+	; Copy destination address
+	ADD	a1, v4, #16
+	ADD	a2, v2, #16
+	MOV	a3, #6
+	BL	memcpy
+
+	ADR	r0, msg2
+	SWI	&56ac5
+
+	; Copy source address
+	ADD	a1, v4, #22
+	ADD	a2, v2, #8
+	MOV	a3, #6
+	BL	memcpy
+
+	ADR	r0, msg3
+	SWI	&56ac5
+
+	; Frame type
+	LDR	a3, [v2, #24]
+	STRB	a3, [v4, #29]
+	LDR	a3, [v2, #25]
+	STRB	a3, [v4, #28]
+
+	ADR	r0, msg4
+	SWI	&56ac5
+
+	LDR	a1, [v1, #0] ; Next mbuf in chain
+	BL	outputmbufchain
+	ADD	a1, a1, #14 ; Ethernet header length
+	STR	a1, [v3, #20] ; Store length in hdr
+	STR	a1, [v3, #24]
+
+	ADR	r0, msg5
+	SWI	&56ac5
+
+	; Copy hdr to output
+	MOV	a1, v4
+	ADD	a2, v3, #12
+	MOV	a3, #16
+	BL	memcpy
+
+rxexit
 	LDMFD	sp!, {r0-r12, lr, pc}
 
+rxhdroverflow
+	MOV	a2, #1
+	STR	a2, [v3, #8] ; overflow
+	B	rxexit
 
 numclaims
 	DCD	0
