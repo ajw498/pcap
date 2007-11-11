@@ -63,18 +63,19 @@ static struct {
 static char *databuffer1;
 static char *databuffer2;
 static int databuffersize;
+static int writebuffer;
 static FILE *file;
 
 
 _kernel_oserror *callevery_handler(_kernel_swi_regs *r, void *pw)
 {
-	if ((workspace.writeptr == databuffer1) || (workspace.writeptr == databuffer2)) {
+	workspace.rechdr.ts_sec += 1;
+	if (workspace.writeptr == ((writebuffer == 1) ? databuffer1 : databuffer2)) {
 		// No new data
 		return NULL;
 	}
 //	semiprint("New data");
 	_swix(OS_AddCallBack, _INR(0, 1), callback, pw);
-	workspace.rechdr.ts_sec += 1;
 	return NULL;
 }
 
@@ -91,22 +92,31 @@ _kernel_oserror *callback_handler(_kernel_swi_regs *r, void *pw)
 	sema = 1;
 
 	end = workspace.writeptr;
-	if (end > databuffer2) {
-		start = databuffer2;
-		workspace.writeptr = databuffer1;
-		workspace.writeend = databuffer2;
-	} else {
+	if (writebuffer == 1) {
 		start = databuffer1;
 		workspace.writeptr = databuffer2;
 		workspace.writeend = databuffer2 + databuffersize/2;
+		writebuffer = 2;
+	} else {
+		start = databuffer2;
+		workspace.writeptr = databuffer1;
+		workspace.writeend = databuffer1 + databuffersize/2;
+		writebuffer = 1;
+	}
+	if (workspace.overflow) {
+		semiprint("Overflow detected");
+		end = start; /* Drop whole packets */
 	}
 	_swix(OS_IntOn,0);
 	if (file) {
-		if (workspace.overflow) {
-			semiprint("Overflow detected");
-		} else {
-			fwrite(start, 1, end - start, file);
+		if (end < start) {
+			semiprint("end < start!");
+		} else if (end - start > 4096) {
+			char buf[256];
+			sprintf(buf, "outputing large data %d bytes",end - start);
+			semiprint(buf);
 		}
+		fwrite(start, 1, end - start, file);
 	} else {
 		semiprint("File not open");
 	}
@@ -133,6 +143,7 @@ _kernel_oserror *initialise(const char *cmd_tail, int podule_base, void *private
 	databuffer2 = databuffer1 + databuffersize/2;
 	workspace.writeptr = databuffer1;
 	workspace.writeend = databuffer2;
+	writebuffer = 1;
 
 	remove("@.data/pcap");
 	file = fopen("@.data/pcap","wb");
