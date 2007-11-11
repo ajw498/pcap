@@ -51,6 +51,8 @@ struct drivers {
 	struct drivers *next;
 };
 
+#define MAXCLAIMS 20
+
 static struct {
 	char *volatile writeptr;
 	char *volatile writeend;
@@ -58,6 +60,9 @@ static struct {
 	pcaprec_hdr_t rechdr;
 	struct drivers *drivers;
 	void *oldswihandler;
+	int capturing;
+	int numrxclaims;
+	void *rxclaims[2*MAXCLAIMS];
 } workspace;
 
 static char *databuffer1;
@@ -164,6 +169,8 @@ _kernel_oserror *initialise(const char *cmd_tail, int podule_base, void *private
 	workspace.rechdr.ts_sec = 0;
 	workspace.rechdr.ts_usec = 0;
 	workspace.drivers = NULL;
+	workspace.numrxclaims = 0;
+	workspace.capturing = 1;
 
 	_swix(OS_IntOff,0);
 	claimswi(&workspace);

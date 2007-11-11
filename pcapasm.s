@@ -6,6 +6,17 @@ OVERFLOW	EQU	8
 RECHDR		EQU	12
 DRIVERS		EQU	28
 OLDSWIHANDLER	EQU	32
+CAPTURING	EQU	36
+NUMRXCLAIMS	EQU	40
+RXCLAIMS	EQU	44
+
+; Offsets within an mbuf header
+MBUF_NEXT	EQU	0
+MBUF_LIST	EQU	4
+MBUF_OFF	EQU	8
+MBUF_LEN	EQU	12
+
+XOS_ClaimProcessorVector	EQU	&69+&20000
 
         AREA    |C$$data|,DATA,REL
 
@@ -20,59 +31,50 @@ semiprint
 	LDMFD	r13!, {pc}
 
 	EXPORT	|claimswi|
+; Claim the SWI vector
+; a1 = ptr to workspace struct
+; Returns error block ptr, or 0
 claimswi
-	STMFD	r13!,{lr}
-	LDR	r1, =|workspace|
-	STR	r0, [r1]
-	MOV	r0, #2
-	ORR	r0, r0, #&100
-	ADR	r1, swihandler
-	SWI	&69+&20000 ;XOS_ClaimProcessorVector
-	MOVVC	r0, #0
-	STR	r1, oldswihandler
-	LDMFD	r13!, {pc}
+	STMFD	sp!, {lr}
+	MOV	a4, a1
+	; Save workspace ptr, so SWI handler can access it
+	LDR	a1, =|workspace|
+	STR	a4, [a1]
+
+	MOV	a1, #2
+	ORR	a1, a1, #&100
+	ADR	a2, swihandler
+	SWI	XOS_ClaimProcessorVector
+	STRVC	a2, [a4, #OLDSWIHANDLER]
+	MOVVC	a1, #0
+	LDMFD	sp!, {pc}
 
 	EXPORT	|releaseswi|
+; Release the SWI vector
+; Returns error block ptr, or 0
 releaseswi
-	STMFD	r13!,{lr}
-	MOV	r0, #2
-	LDR	r1, oldswihandler
-	ADR	r2, swihandler
-	SWI	&69+&20000 ;XOS_ClaimProcessorVector
-	MOVVC	r0, #0
-	LDMFD	r13!, {pc}
+	STMFD	sp!, {lr}
+	LDR	a4, =|workspace|
+	LDR	a4, [a4]
 
-msg1	DCB	"Msg 1",0
-	ALIGN
-msg2	DCB	"Msg 2",0
-	ALIGN
-msg3	DCB	"Msg 3",0
-	ALIGN
-msg4	DCB	"Msg 4",0
-	ALIGN
-msg5	DCB	"Msg 5",0
-	ALIGN
-msg6	DCB	"Msg 6",0
-	ALIGN
-msg7	DCB	"Filter SWI",0
-	ALIGN
-msg8	DCB	"RX call",0
-	ALIGN
+	MOV	a1, #2
+	LDR	a2, [a4, #OLDSWIHANDLER]
+	ADR	a3, swihandler
+	SWI	XOS_ClaimProcessorVector
+	MOVVC	a1, #0
+	STRVC	a1, [a4, #OLDSWIHANDLER]
+	LDMFD	sp!, {pc}
 
-	; a1 = dest
-	; a2 = src
-	; a3 = len (assumes len > 0)
+
+; a1 = dest
+; a2 = src
+; a3 = len (assumes len > 0)
 memcpy
 	LDRB	a4, [a2], #1
 	SUBS	a3, a3, #1
 	STRB	a4, [a1], #1
 	BGT	memcpy
 	MOV	pc, lr
-
-MBUF_NEXT	EQU	0
-MBUF_LIST	EQU	4
-MBUF_OFF	EQU	8
-MBUF_LEN	EQU	12
 
 ; a1 mbuf ptr
 ; returns length in a1
@@ -83,26 +85,19 @@ outputmbuf
 	LDR	a1, [a1, #MBUF_LEN]
 	TEQ	a1, #0
 	LDMEQFD	sp!, {v1-v2, pc}
+	MOV	a3, a1 ; payload length
 	LDR	v1, =|workspace|
 	LDR	v1, [v1]
-	LDR	a4, [v1, #WRITEPTR]
+	LDR	a1, [v1, #WRITEPTR]
 	LDR	v2, [v1, #WRITEEND]
-	ADD	a3, a4, a1
-	CMP	a3, v2
+	ADD	a4, a1, a3
+	CMP	a4, v2
 	BHS	overflow
-	STR	a3, [v1, #WRITEPTR]
+	STR	a4, [v1, #WRITEPTR]
 
-	; a2 = src
-	; a1 = len
-	; a4 = dest
-	MOV	a3, a1
-;	SWI	&56ac8
-copyloop
-	LDRB	v1, [a2], #1
-	SUBS	a3, a3, #1
-	STRB	v1, [a4], #1
-	BGT	copyloop
-
+	MOV	v1, a3
+	BL	memcpy
+	MOV	a1, v1 ; Return length
 	LDMFD	sp!, {v1-v2, pc}
 
 overflow
@@ -131,19 +126,18 @@ chainend
 	LDMFD	sp!, {v1-v2, pc}
 
 
-	EXPORT	|oldswihandler|
-oldswihandler
-	DCD	0
-
-	EXPORT	|swihandler|
-
+; The SWI vector handler
+; Called in SVC32 mode, IRQs off
 swihandler
-	STMFD	sp!,{r0-r12,lr}
+	STMFD	sp!, {r0-r12, lr, pc}
 	MRS	r0, CPSR
 	STMFD	sp!,{r0}
 
 	LDR	v1, =|workspace|
 	LDR	v1, [v1]
+
+	LDR	a1, [v1, #OLDSWIHANDLER]
+	STR	a1, [sp, #15*4] ; Poke return address onto stack
 
 	; Load SWI number
 	LDR	v2, [r14, #-4]
@@ -177,11 +171,14 @@ driverloop
 swibasefound
 	LDR	a1, [a3, #12] ; Load MAC address from DIB
 	AND	a2, v2, #&3F ; Offset within SWI base
-	TEQ	a2, #4
-	BEQ	txswi
 	TEQ	a2, #5
 	BEQ	filterswi
-
+	TEQ	a2, #4
+	BNE	swiexit
+	; Must be tx SWI, but don't bother if we shouldn't be capturing
+	LDR	a2, [v1, #CAPTURING]
+	TEQ	a2, #0
+	BNE	txswi
 	B	swiexit
 
 
@@ -210,21 +207,31 @@ txlistloop
 	LDR	v4, [v4, #MBUF_LIST] ; next mbuf chain in list
 	B	txlistloop
 
-
+; Filter SWI
+; a1 = flags, bit 0 set if releasing
+; a2 = unit number
+; a3 = frame type
+; a4 = address level
+; v1 = error level
+; v2 = handlers private word pointer
+; v3 = address of routine to receive this frame
 filterswi
 	; Reload original regs
-	LDMIB	sp,{r0-r6}
+	LDMIB	sp, {a1-v3}
 
 	; Only modify claims
-	TST	r0, #1
+	TST	a1, #1
 	BNE	swiexit
 
-	LDR	a1, numclaims
-	MOV	a2, a1, LSL#3
-	ADD	a1, a1, #1
-	STR	a1, numclaims
+	LDR	a4, =|workspace|
+	LDR	a4, [a4]
 
-	LDR	a3, =claims
+	LDR	a1, [a4, #NUMRXCLAIMS]
+	MOV	a2, a1, LSL#3 ; 2 words per claim
+	ADD	a1, a1, #1
+	STR	a1, [a4, #NUMRXCLAIMS]
+
+	ADD	a3, a4, #RXCLAIMS
 	ADD	a3, a3, a2
 
 	; Save the original details
@@ -236,10 +243,9 @@ filterswi
 	STR	a4, [sp, #7*4]
 
 swiexit
-	LDMFD	sp!,{r0}
+	LDMFD	sp!, {r0}
 	MSR	CPSR_cxsf, r0
-	LDMFD	sp!,{r0-r12,lr}
-	LDR	pc, oldswihandler
+	LDMFD	sp!, {r0-r12, lr, pc}
 
 ; a1 = frame type
 ; a2 = mbuf chain
@@ -309,6 +315,13 @@ rxcall
 	LDR	a2, [r12, #4] ; New pc
 	STR	a2, [sp, #14*4] ; Poke onto stack
 
+	; Check if we need to capture
+	LDR	a1, =|workspace|
+	LDR	a1, [a1]
+	LDR	a2, [a1, #CAPTURING]
+	TEQ	a2, #0
+	BEQ	rxexit
+
 rxlistloop
 	MOVS	a1, v1
 	BEQ	rxexit
@@ -377,21 +390,6 @@ rxhdroverflow
 	MOV	a2, #1
 	STR	a2, [v3, #OVERFLOW]
 	LDMFD	sp!, {v1-v6, pc}
-
-
-numclaims
-	DCD	0
-claims
-	DCD	0
-	DCD	0
-	DCD	0
-	DCD	0
-	DCD	0
-	DCD	0
-	DCD	0
-	DCD	0
-	DCD	0
-	DCD	0
 
 
         END
