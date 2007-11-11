@@ -69,29 +69,28 @@ memcpy
 	BGT	memcpy
 	MOV	pc, lr
 
-;struct mbuf {
-;    uint32_t m_next;
-;    uint32_t m_list;
-;    uint32_t m_off;
-;    uint32_t m_len;
+MBUF_NEXT	EQU	0
+MBUF_LIST	EQU	4
+MBUF_OFF	EQU	8
+MBUF_LEN	EQU	12
 
 ; a1 mbuf ptr
 ; returns length in a1
 outputmbuf
 	STMFD	sp!, {v1-v2, lr}
-	LDR	a2, [a1, #8] ; Offset
+	LDR	a2, [a1, #MBUF_OFF]
 	ADD	a2, a1, a2
-	LDR	a1, [a1, #12] ; Length
+	LDR	a1, [a1, #MBUF_LEN]
 	TEQ	a1, #0
 	LDMEQFD	sp!, {v1-v2, pc}
 	LDR	v1, =|workspace|
 	LDR	v1, [v1]
-	LDR	a4, [v1, #0] ; writeptr
-	LDR	v2, [v1, #4] ; writeend
+	LDR	a4, [v1, #WRITEPTR]
+	LDR	v2, [v1, #WRITEEND]
 	ADD	a3, a4, a1
 	CMP	a3, v2
 	BHS	overflow
-	STR	a3, [v1, #0] ; new writeptr
+	STR	a3, [v1, #WRITEPTR]
 
 	; a2 = src
 	; a1 = len
@@ -108,7 +107,7 @@ copyloop
 
 overflow
 	MOV	a2, #1
-	STR	a2, [v1, #8] ; overflow
+	STR	a2, [v1, #OVERFLOW]
 	MOV	a1, #0
 	LDMFD	sp!, {v1-v2, pc}
 
@@ -123,7 +122,7 @@ chainloop
 	BEQ	chainend
 	BL	outputmbuf
 	ADD	v2, v2, a1
-	LDR	a1, [v1, #0]
+	LDR	a1, [v1, #MBUF_NEXT]
 	MOV	v1, a1
 	B	chainloop
 
@@ -208,22 +207,17 @@ txlistloop
 	MOV	a3, v5 ; dest addr
 	MOV	a4, v6 ; src addr
 	BL	outputtxchain
-	LDR	v4, [v4, #4] ; next mbuf chain in list
+	LDR	v4, [v4, #MBUF_LIST] ; next mbuf chain in list
 	B	txlistloop
 
 
 filterswi
-	ADR	r0, msg7
-	SWI	&56ac5
-
 	; Reload original regs
 	LDMIB	sp,{r0-r6}
 
 	; Only modify claims
 	TST	r0, #1
 	BNE	swiexit
-
-	SWI	&56ac8
 
 	LDR	a1, numclaims
 	MOV	a2, a1, LSL#3
@@ -256,12 +250,12 @@ outputtxchain
 
 	LDR	v3, =|workspace|
 	LDR	v3, [v3]
-	LDR	v4, [v3, #0] ; writeptr
-	LDR	v5, [v3, #4] ; writeend
+	LDR	v4, [v3, #WRITEPTR]
+	LDR	v5, [v3, #WRITEEND]
 	ADD	v6, v4, #16+14 ; record header + frame header lengths
 	CMP	v6, v5
 	BHS	txhdroverflow
-	STR	v6, [v3, #0] ; writeptr
+	STR	v6, [v3, #WRITEPTR]
 
 	MOV	v1, a2
 	MOV	v2, a4
@@ -299,7 +293,7 @@ outputtxchain
 
 txhdroverflow
 	MOV	a2, #1
-	STR	a2, [v3, #8] ; overflow
+	STR	a2, [v3, #OVERFLOW]
 	LDMFD	sp!, {v1-v6, pc}
 
 ; rx routine called directly from the DCI4 driver
@@ -318,7 +312,7 @@ rxcall
 rxlistloop
 	MOVS	a1, v1
 	BEQ	rxexit
-	LDR	v1, [v1, #4] ; next mbuf chain in list
+	LDR	v1, [v1, #MBUF_LIST] ; next mbuf chain in list
 	BL	outputrxchain
 	B	rxlistloop
 
@@ -333,14 +327,14 @@ outputrxchain
 
 	LDR	v3, =|workspace|
 	LDR	v3, [v3]
-	LDR	v4, [v3, #0] ; writeptr
-	LDR	v5, [v3, #4] ; writeend
+	LDR	v4, [v3, #WRITEPTR]
+	LDR	v5, [v3, #WRITEEND]
 	ADD	v6, v4, #16+14 ; record header + frame header lengths
 	CMP	v6, v5
 	BHS	rxhdroverflow
-	STR	v6, [v3, #0] ; writeptr
+	STR	v6, [v3, #WRITEPTR]
 
-	LDR	v2, [v1, #8] ; mbuf offset
+	LDR	v2, [v1, #MBUF_OFF] ; mbuf offset
 	ADD	v2, v1, v2
 	; v2 = rx header
 	; +8 src addr
@@ -365,7 +359,7 @@ outputrxchain
 	LDR	a3, [v2, #25]
 	STRB	a3, [v4, #28]
 
-	LDR	a1, [v1, #0] ; Next mbuf in chain, contains the payload
+	LDR	a1, [v1, #MBUF_NEXT] ; Next mbuf in chain, contains the payload
 	BL	outputmbufchain
 	ADD	a1, a1, #14 ; Ethernet header length
 	STR	a1, [v3, #20] ; Store length in pcap record hdr
@@ -381,7 +375,7 @@ outputrxchain
 
 rxhdroverflow
 	MOV	a2, #1
-	STR	a2, [v3, #8] ; overflow
+	STR	a2, [v3, #OVERFLOW]
 	LDMFD	sp!, {v1-v6, pc}
 
 
