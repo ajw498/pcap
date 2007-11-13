@@ -1,7 +1,7 @@
 
-help-string:  pcap 0.01 © Alex Waugh 2007
+help-string:  Wiresalmon 1.00 © Alex Waugh 2007
 
-title-string: pcap
+title-string: Wiresalmon
 
 initialisation-code: initialise
 
@@ -10,6 +10,8 @@ finalisation-code: finalise
 service-call-handler: service 0x9d
 
 swi-chunk-base-number: 0x58C80
+
+swi-decoding-table: Wiresalmon, Reinit, Start, Stop
 
 swi-handler-code: swi
 
