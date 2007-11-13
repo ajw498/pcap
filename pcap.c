@@ -7,12 +7,15 @@
 #include <ctype.h>
 #include <swis.h>
 #include <kernel.h>
+#include <time.h>
+
 
 #include "pcapmod.h"
 
 void semiprint(char *msg);
 
-static _kernel_oserror ErrNoMem = {0x0, "Out of memory"};
+static _kernel_oserror error_nomem = {0x58C80, "Out of memory"};
+static _kernel_oserror error_overflow = {0x58C81, "Buffer overflowed while capturing, some packets may have been dropped"};
 
 _kernel_oserror *claimswi(void *wkspc);
 _kernel_oserror *releaseswi(void);
@@ -71,16 +74,15 @@ static struct {
 	pcaprec_hdr_t rechdr;
 	struct drivers *drivers;
 	void *oldswihandler;
-	int capturing;
+	FILE *capturing;
 	int numrxclaims;
 	void *rxclaims[2*MAXCLAIMS];
 } workspace;
 
-static char *databuffer1;
+static char *databuffer1 = NULL;
 static char *databuffer2;
 static int databuffersize;
 static int writebuffer;
-static FILE *file;
 
 #define MAX_DRIVERS 10
 
@@ -93,6 +95,7 @@ _kernel_oserror *reinit_drivers(void)
 	struct drivers *chain;
 	int i;
 
+	/* Create a list of the SWI bases of all driver modules */
 	err = _swix(OS_ServiceCall, _INR(0,1) | _OUT(0), 0, 0x9B, &chain);
 	if (err) return err;
 	while (chain) {
@@ -110,6 +113,7 @@ _kernel_oserror *reinit_drivers(void)
 		chain = next;
 	}
 
+	/* Search through module list to find modules with matching SWI bases */
 	for (i = 0; i < numswis; i++) {
 		int j = 0;
 		struct module *module;
@@ -129,12 +133,18 @@ _kernel_oserror *reinit_drivers(void)
 
 _kernel_oserror *callevery_handler(_kernel_swi_regs *r, void *pw)
 {
-	workspace.rechdr.ts_sec += 1;
+	/* Increment timestamp */
+	workspace.rechdr.ts_usec += 20000;
+	if (workspace.rechdr.ts_usec > 1000000) {
+		workspace.rechdr.ts_usec -= 1000000;
+		workspace.rechdr.ts_sec += 1;
+	}
+
 	if (workspace.writeptr == ((writebuffer == 1) ? databuffer1 : databuffer2)) {
 		// No new data
 		return NULL;
 	}
-//	semiprint("New data");
+
 	_swix(OS_AddCallBack, _INR(0, 1), callback, pw);
 	return NULL;
 }
@@ -144,8 +154,12 @@ _kernel_oserror *callback_handler(_kernel_swi_regs *r, void *pw)
 	char *end;
 	char *start;
 	static volatile int sema = 0;
+
+	/* Turn inturrupts off while switching buffers, to ensure the
+	   SWI handler sees a consistant view */
 	_swix(OS_IntOff,0);
 	if (sema) {
+		/* Prevent reentrancy */
 		_swix(OS_IntOn,0);
 		return NULL;
 	}
@@ -164,74 +178,111 @@ _kernel_oserror *callback_handler(_kernel_swi_regs *r, void *pw)
 		writebuffer = 1;
 	}
 	if (workspace.overflow) {
-		semiprint("Overflow detected");
-		end = start; /* Drop whole packets */
+		/* Drop whole packets */
+		end = start; 
 	}
+	/* Reenable interrupts before doing I/O */
 	_swix(OS_IntOn,0);
-	if (file) {
-		if (end < start) {
-			semiprint("end < start!");
-		} else if (end - start > 4096) {
-			char buf[256];
-			sprintf(buf, "outputing large data %d bytes",end - start);
-			semiprint(buf);
-		}
-		fwrite(start, 1, end - start, file);
-	} else {
-		semiprint("File not open");
+
+	/* Write data to file */
+	if (workspace.capturing) {
+		fwrite(start, 1, end - start, workspace.capturing);
 	}
 	sema = 0;
+
 	return NULL;
 }
 
-_kernel_oserror *finalise(int fatal, int podule, void *private_word)
+static _kernel_oserror *stop_capture(void)
 {
-	_swix(OS_RemoveTickerEvent, _INR(0,1), callevery, private_word);
+	FILE *file = workspace.capturing;
+
+	/* Ensure capturing has stopped before closing the file */
+	workspace.capturing = NULL;
 	if (file) fclose(file);
-	return releaseswi();
+
+	if (databuffer1) free(databuffer1);
+	databuffer1 = NULL;
+
+	if (workspace.overflow) {
+		return &error_overflow;
+	}
+	return NULL;
 }
 
-_kernel_oserror *initialise(const char *cmd_tail, int podule_base, void *private_word)
+static _kernel_oserror *start_capture(char *filename, int bufsize)
 {
-	(void)cmd_tail;
-	(void)podule_base;
+	FILE *file;
+	pcap_hdr_t hdr;
 
-	databuffersize = 512*1024;
+	stop_capture();
+
+	if (bufsize == 0) bufsize = 256*1024;
+	databuffersize = bufsize;
 	databuffer1 = malloc(databuffersize);
-	if (databuffer1 == NULL) return &ErrNoMem;
-//	{char buf[256]; sprintf(buf, "databuffer addr %p",&workspace.databuffer);semiprint(buf);}
+	if (databuffer1 == NULL) return &error_nomem;
 	databuffer2 = databuffer1 + databuffersize/2;
 	workspace.writeptr = databuffer1;
 	workspace.writeend = databuffer2;
 	writebuffer = 1;
 
-	remove("@.data/pcap");
-	file = fopen("@.data/pcap","wb");
+	workspace.overflow = 0;
+
+	file = fopen(filename,"wb");
 	if (file == NULL) {
-		semiprint("File open failed");
-	} else {
-		pcap_hdr_t hdr;
-		hdr.magic_number = 0xa1b2c3d4;
-		hdr.version_major = 2;
-		hdr.version_minor = 4;
-		hdr.thiszone = 0;
-		hdr.sigfigs = 0;
-		hdr.snaplen = databuffersize/2;
-		hdr.network = 1;
-		fwrite(&hdr, sizeof(hdr), 1, file);
+		return _kernel_last_oserror();
 	}
 
-	workspace.rechdr.ts_sec = 0;
+	/* Write the pcap file header */
+	hdr.magic_number = 0xa1b2c3d4;
+	hdr.version_major = 2;
+	hdr.version_minor = 4;
+	hdr.thiszone = 0;
+	hdr.sigfigs = 0;
+	hdr.snaplen = databuffersize/2;
+	hdr.network = 1;
+	fwrite(&hdr, sizeof(hdr), 1, file);
+
+	/* Enable capturing to start */
+	workspace.capturing = file;
+
+	return NULL;
+}
+
+_kernel_oserror *finalise(int fatal, int podule, void *private_word)
+{
+	stop_capture();
+
+	_swix(OS_RemoveTickerEvent, _INR(0,1), callevery, private_word);
+	_swix(OS_RemoveTickerEvent, _INR(0,1), callback, private_word);
+
+	return releaseswi();
+}
+
+_kernel_oserror *initialise(const char *cmd_tail, int podule_base, void *private_word)
+{
+	_kernel_oserror *err;
+
+	(void)cmd_tail;
+	(void)podule_base;
+
+	workspace.rechdr.ts_sec = time(NULL);
 	workspace.rechdr.ts_usec = 0;
 	workspace.drivers = NULL;
 	workspace.numrxclaims = 0;
-	workspace.capturing = 1;
+	workspace.capturing = NULL;
 
 	_swix(OS_IntOff,0);
-	claimswi(&workspace);
+	err = claimswi(&workspace);
 	_swix(OS_IntOn,0);
 
-	_swix(OS_CallEvery, _INR(0,2), 1, callevery, private_word);
+	if (err) return err;
+
+	err = _swix(OS_CallEvery, _INR(0,2), 1, callevery, private_word);
+	if (err) {
+		releaseswi();
+		return err;
+	}
 
 	return 0;
 }
@@ -266,6 +317,8 @@ _kernel_oserror *swi(int swi_no, _kernel_swi_regs *r, void *private_word)
 {
 	switch (swi_no) {
 	case 0: return reinit_drivers();
+	case 1: return start_capture((char *)r->r[0], r->r[1]);
+	case 2: return stop_capture();
 	}
 	return NULL;
 }
