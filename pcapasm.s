@@ -160,12 +160,12 @@ driverloop
 	TEQ	a2, #0
 	BEQ	swiexit
 
-	LDR	a3, [a2, #0] ; DIB
+	LDR	a3, [a2, #4] ; DIB
 	LDR	a4, [a3, #0] ; SWI base
 	TEQ	a1, a4
 	BEQ	swibasefound
 
-	LDR	a2, [a2, #4] ; Next driver
+	LDR	a2, [a2, #0] ; Next driver
 	B	driverloop
 
 swibasefound

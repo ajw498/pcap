@@ -47,8 +47,19 @@ struct dib {
 };
 
 struct drivers {
-	struct dib *dib;
 	struct drivers *next;
+	struct dib *dib;
+};
+
+struct module {
+	int start;
+	int init;
+	int final;
+	int service;
+	int title;
+	int help;
+	int command;
+	int swibase;
 };
 
 #define MAXCLAIMS 20
@@ -71,6 +82,50 @@ static int databuffersize;
 static int writebuffer;
 static FILE *file;
 
+#define MAX_DRIVERS 10
+
+/* rmreinit all DCI4 driver modules, to ensure that we can insert our hook into the rx routines */
+_kernel_oserror *reinit_drivers(void)
+{
+	int swibases[MAX_DRIVERS];
+	int numswis = 0;
+	_kernel_oserror *err;
+	struct drivers *chain;
+	int i;
+
+	err = _swix(OS_ServiceCall, _INR(0,1) | _OUT(0), 0, 0x9B, &chain);
+	if (err) return err;
+	while (chain) {
+		struct drivers *next = chain->next;
+		if (numswis < MAX_DRIVERS) {
+			/* Only add if not already in the list */
+			for (i = 0; i < numswis; i++) {
+				if (chain->dib->dib_swibase == swibases[i]) break;
+			}
+			if (i == numswis) {
+				swibases[numswis++] = chain->dib->dib_swibase;
+			}
+		}
+		free(chain);
+		chain = next;
+	}
+
+	for (i = 0; i < numswis; i++) {
+		int j = 0;
+		struct module *module;
+		while (_swix(OS_Module, _INR(0,2) | _OUT(3), 12, j, 0, &module) == NULL) {
+			if (module->swibase == swibases[i]) {
+				/* Found match, so reinitialise it */
+				char *title = (char *)module + module->title;
+				err = _swix(OS_Module, _INR(0,1), 3, title);
+				if (err) return err;
+				break;
+			}
+			j++;
+		}
+	}
+	return NULL;
+}
 
 _kernel_oserror *callevery_handler(_kernel_swi_regs *r, void *pw)
 {
@@ -207,4 +262,11 @@ void service(int service_number,_kernel_swi_regs * r,void * pw)
 	}
 }
 
+_kernel_oserror *swi(int swi_no, _kernel_swi_regs *r, void *private_word)
+{
+	switch (swi_no) {
+	case 0: return reinit_drivers();
+	}
+	return NULL;
+}
 

@@ -9,4 +9,8 @@ finalisation-code: finalise
 
 service-call-handler: service 0x9d
 
+swi-chunk-base-number: 0x58C80
+
+swi-handler-code: swi
+
 generic-veneers: callevery/callevery_handler callback/callback_handler
