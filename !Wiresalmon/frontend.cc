@@ -195,8 +195,6 @@ void wiresalmon::start_capture(const char *filename)
 {
 	_kernel_oserror *err;
 
-	err = _swix(Wiresalmon_Reinit, 0);
-	if (err) throw err->errmess;
 	err = _swix(Wiresalmon_Start, _INR(0, 1), filename, 0);
 	if (err) throw err->errmess;
 }

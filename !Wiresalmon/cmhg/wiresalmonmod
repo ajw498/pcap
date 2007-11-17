@@ -7,11 +7,9 @@ initialisation-code: initialise
 
 finalisation-code: finalise
 
-service-call-handler: service 0x9d
-
 swi-chunk-base-number: 0x58C80
 
-swi-decoding-table: Wiresalmon, Reinit, Start, Stop
+swi-decoding-table: Wiresalmon, Start, Stop
 
 swi-handler-code: swi
 

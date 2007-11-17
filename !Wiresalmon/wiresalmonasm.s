@@ -1,20 +1,29 @@
 
+MAX_DRIVERS	EQU	10
+MAX_CLAIMS	EQU	20
+
+DRIVER_SIZE	EQU	12
+
 ; Offsets within workspace struct
 WRITEPTR	EQU	0
 WRITEEND	EQU	4
 OVERFLOW	EQU	8
 RECHDR		EQU	12
-DRIVERS		EQU	28
-OLDSWIHANDLER	EQU	32
-CAPTURING	EQU	36
-NUMRXCLAIMS	EQU	40
-RXCLAIMS	EQU	44
+OLDSWIHANDLER	EQU	28
+CAPTURING	EQU	32
+DRIVERS		EQU	36
+NUMRXCLAIMS	EQU	DRIVERS + DRIVER_SIZE * MAX_DRIVERS
+RXCLAIMS	EQU	NUMRXCLAIMS + 4
 
 ; Offsets within an mbuf header
 MBUF_NEXT	EQU	0
 MBUF_LIST	EQU	4
 MBUF_OFF	EQU	8
 MBUF_LEN	EQU	12
+
+; Offsets within drivers struct
+DRIVER_SWIBASE	EQU	0
+DRIVER_MAC	EQU	4
 
 XOS_ClaimProcessorVector	EQU	&69+&20000
 
@@ -155,21 +164,18 @@ swihandler
 	; Get the SWI chunk base
 	BIC	a1, v2, #&3F
 
-	LDR	a2, [v1, #DRIVERS]
+	ADD	a2, v1, #DRIVERS
 driverloop
-	TEQ	a2, #0
+	LDR	a3, [a2, #DRIVER_SWIBASE]
+	TEQ	a3, #0
 	BEQ	swiexit
-
-	LDR	a3, [a2, #4] ; DIB
-	LDR	a4, [a3, #0] ; SWI base
-	TEQ	a1, a4
+	TEQ	a3, a1
 	BEQ	swibasefound
-
-	LDR	a2, [a2, #0] ; Next driver
+	ADD	a2, a2, #DRIVER_SIZE
 	B	driverloop
 
 swibasefound
-	LDR	a1, [a3, #12] ; Load MAC address from DIB
+	ADD	a1, a2, #DRIVER_MAC
 	AND	a2, v2, #&3F ; Offset within SWI base
 	TEQ	a2, #5
 	BEQ	filterswi
@@ -227,6 +233,8 @@ filterswi
 	LDR	a4, [a4]
 
 	LDR	a1, [a4, #NUMRXCLAIMS]
+	CMP	a1, #MAX_CLAIMS
+	BGE	swiexit
 	MOV	a2, a1, LSL#3 ; 2 words per claim
 	ADD	a1, a1, #1
 	STR	a1, [a4, #NUMRXCLAIMS]

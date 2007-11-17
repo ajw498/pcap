@@ -49,8 +49,8 @@ struct dib {
 	unsigned dib_inquire;
 };
 
-struct drivers {
-	struct drivers *next;
+struct dibchain {
+	struct dibchain *next;
 	struct dib *dib;
 };
 
@@ -65,18 +65,25 @@ struct module {
 	int swibase;
 };
 
-#define MAXCLAIMS 20
+#define MAX_DRIVERS 10
+#define MAX_CLAIMS 20
+
+struct driver {
+	int swibase;
+	char mac[6];
+	char pad[2];
+};
 
 static struct {
 	char *volatile writeptr;
 	char *volatile writeend;
 	volatile int overflow;
 	pcaprec_hdr_t rechdr;
-	struct drivers *drivers;
 	void *oldswihandler;
 	FILE *capturing;
+	struct driver drivers[MAX_DRIVERS];
 	int numrxclaims;
-	void *rxclaims[2*MAXCLAIMS];
+	void *rxclaims[2*MAX_CLAIMS];
 } workspace;
 
 static char *databuffer1 = NULL;
@@ -84,55 +91,67 @@ static char *databuffer2;
 static int databuffersize;
 static int writebuffer;
 
-#define MAX_DRIVERS 10
 
-/* rmreinit all DCI4 driver modules, to ensure that we can insert our hook into the rx routines */
-_kernel_oserror *reinit_drivers(void)
+/* Get the swi bases of all loaded DCI4 driver modules */
+static _kernel_oserror *get_drivers(void)
 {
-	int swibases[MAX_DRIVERS];
 	int numswis = 0;
 	_kernel_oserror *err;
-	struct drivers *chain;
-	int i;
+	struct dibchain *chain;
 
-	/* Create a list of the SWI bases of all driver modules */
 	err = _swix(OS_ServiceCall, _INR(0,1) | _OUT(0), 0, 0x9B, &chain);
 	if (err) return err;
 	while (chain) {
-		struct drivers *next = chain->next;
-		if (numswis < MAX_DRIVERS) {
+		struct dibchain *next = chain->next;
+		/* Leave the last entry empty, as a list terminator */
+		if (numswis < MAX_DRIVERS - 1) {
+			int i;
 			/* Only add if not already in the list */
 			for (i = 0; i < numswis; i++) {
-				if (chain->dib->dib_swibase == swibases[i]) break;
+				if (chain->dib->dib_swibase == workspace.drivers[i].swibase) break;
 			}
 			if (i == numswis) {
-				swibases[numswis++] = chain->dib->dib_swibase;
+				memcpy(workspace.drivers[numswis].mac, chain->dib->dib_address, 6);
+				workspace.drivers[numswis++].swibase = chain->dib->dib_swibase;
 			}
 		}
 		free(chain);
 		chain = next;
 	}
+	return NULL;
+}
+
+/* rmreinit all DCI4 driver modules, to ensure that we can insert or remove our hook into the rx routines */
+static void reinit_drivers(void)
+{
+	int i;
 
 	/* Search through module list to find modules with matching SWI bases */
-	for (i = 0; i < numswis; i++) {
+	for (i = 0; i < MAX_DRIVERS; i++) {
 		int j = 0;
 		struct module *module;
+
+		/* Check for end of list */
+		if (workspace.drivers[i].swibase == 0) break;
+
 		while (_swix(OS_Module, _INR(0,2) | _OUT(3), 12, j, 0, &module) == NULL) {
-			if (module->swibase == swibases[i]) {
+			if (module->swibase == workspace.drivers[i].swibase) {
 				/* Found match, so reinitialise it */
 				char *title = (char *)module + module->title;
-				err = _swix(OS_Module, _INR(0,1), 3, title);
-				if (err) return err;
+				/* Ignore errors, so we don't terminate before doing all modules needed */
+				_swix(OS_Module, _INR(0,1), 3, title);
 				break;
 			}
 			j++;
 		}
 	}
-	return NULL;
 }
 
 _kernel_oserror *callevery_handler(_kernel_swi_regs *r, void *pw)
 {
+	(void)r;
+	(void)pw;
+
 	/* Increment timestamp */
 	workspace.rechdr.ts_usec += 20000;
 	if (workspace.rechdr.ts_usec > 1000000) {
@@ -154,6 +173,9 @@ _kernel_oserror *callback_handler(_kernel_swi_regs *r, void *pw)
 	char *end;
 	char *start;
 	static volatile int sema = 0;
+
+	(void)r;
+	(void)pw;
 
 	/* Turn inturrupts off while switching buffers, to ensure the
 	   SWI handler sees a consistant view */
@@ -251,12 +273,23 @@ static _kernel_oserror *start_capture(char *filename, int bufsize)
 
 _kernel_oserror *finalise(int fatal, int podule, void *private_word)
 {
+	_kernel_oserror *err;
+
+	(void)fatal;
+	(void)podule;
+
 	stop_capture();
 
 	_swix(OS_RemoveTickerEvent, _INR(0,1), callevery, private_word);
 	_swix(OS_RemoveTickerEvent, _INR(0,1), callback, private_word);
 
-	return releaseswi();
+	err = releaseswi();
+	if (err) return err;
+
+	/* Reinitialise the drivers so the rx hooks don't get called anymore */
+	reinit_drivers();
+
+	return NULL;
 }
 
 _kernel_oserror *initialise(const char *cmd_tail, int podule_base, void *private_word)
@@ -268,9 +301,12 @@ _kernel_oserror *initialise(const char *cmd_tail, int podule_base, void *private
 
 	workspace.rechdr.ts_sec = time(NULL);
 	workspace.rechdr.ts_usec = 0;
-	workspace.drivers = NULL;
+	memset(&workspace.drivers, 0, sizeof(struct driver) * MAX_DRIVERS);
 	workspace.numrxclaims = 0;
 	workspace.capturing = NULL;
+
+	err = get_drivers();
+	if (err) return err;
 
 	_swix(OS_IntOff,0);
 	err = claimswi(&workspace);
@@ -284,42 +320,23 @@ _kernel_oserror *initialise(const char *cmd_tail, int podule_base, void *private
 		return err;
 	}
 
+	/* Reinitialise all drivers, so we can insert our hook into the rx call */
+	reinit_drivers();
+
 	return 0;
-}
-
-/* Called only for Service_DCIDriverStatus */
-void service(int service_number,_kernel_swi_regs * r,void * pw)
-{
-	if (r->r[2]) {
-		/* Driver terminating, remove from list */
-		struct drivers *driver = workspace.drivers;
-		struct drivers **prev = &(workspace.drivers);
-		while (driver) {
-			if (driver->dib == (struct dib *)r->r[0]) {
-				*prev = driver->next;
-				free(driver);
-				break;
-			}
-			prev = &(driver->next);
-			driver = driver->next;
-		}
-	} else {
-		struct drivers *driver = malloc(sizeof(struct drivers));
-		if (driver == NULL) return; /* Not much else we can do */
-
-		driver->dib = (struct dib *)r->r[0];
-		driver->next = workspace.drivers;
-		workspace.drivers = driver;
-	}
 }
 
 _kernel_oserror *swi(int swi_no, _kernel_swi_regs *r, void *private_word)
 {
+	(void)private_word;
+
 	switch (swi_no) {
-	case 0: return reinit_drivers();
-	case 1: return start_capture((char *)r->r[0], r->r[1]);
-	case 2: return stop_capture();
-	default: return error_BAD_SWI;
+	case Wiresalmon_Start - Wiresalmon_00:
+		return start_capture((char *)r->r[0], r->r[1]);
+	case Wiresalmon_Stop - Wiresalmon_00:
+		return stop_capture();
+	default:
+		return error_BAD_SWI;
 	}
 	return NULL;
 }

@@ -1,5 +1,5 @@
 
-CFLAGS = -c -IC: -throwback -zM -Wp
+CFLAGS = -c -IC: -throwback -zM -Wp -fah
 LINKFLAGS = -rmf -o $@
 ASFLAGS = -throwback
 CMHGFLAGS = -d wiresalmonmod.h -throwback
