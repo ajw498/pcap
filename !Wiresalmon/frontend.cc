@@ -154,18 +154,22 @@ void wiresalmon::handle_event(rtk::events::mouse_click& ev)
 		}
 	} else if ((ev.target() == &start) && (ev.buttons() == 4) && start.enabled()) {
 		if (pathname.text().find_first_of(".:<") == string::npos) {
-			os::Wimp_ReportError(0, "To save, drag the icon to a directory display", "Wiresalmon", 0, 0);
-		} else {
-			stop.enabled(true);
-			start.enabled(false);
-			filetype.enabled(false);
-			pathname.enabled(false);
+			throw "To save, drag the icon to a directory display";
 		}
+		stop.enabled(true);
+		start.enabled(false);
+		filetype.enabled(false);
+		pathname.enabled(false);
+
+		start_capture(pathname.text().c_str());
+
 	} else if ((ev.target() == &stop) && (ev.buttons() == 4) && stop.enabled()) {
 		stop.enabled(false);
 		start.enabled(true);
 		filetype.enabled(true);
 		pathname.enabled(true);
+
+		stop_capture();
 	}
 }
 
@@ -183,5 +187,24 @@ int main(void)
 	wiresalmon app;
 	app.run();
 	return 0;
+}
+
+#include "swis.h"
+
+void wiresalmon::start_capture(const char *filename)
+{
+	_kernel_oserror *err;
+
+	err = _swix(Wiresalmon_Reinit, 0);
+	if (err) throw err->errmess;
+	err = _swix(Wiresalmon_Start, _INR(0, 1), filename, 0);
+	if (err) throw err->errmess;
+}
+
+void wiresalmon::stop_capture(void)
+{
+	_kernel_oserror *err;
+	err = _swix(Wiresalmon_Stop, 0);
+	if (err) throw err->errmess;
 }
 

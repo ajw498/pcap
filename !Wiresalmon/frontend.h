@@ -67,6 +67,8 @@ public:
 	void handle_event(rtk::events::mouse_click& ev);
 	void handle_event(rtk::events::user_drag_box& ev);
 	writable_field pathname;
+	void start_capture(const char *filename);
+	void stop_capture(void);
 private:
 	ibar_icon ibicon;
 	menu ibmenu;

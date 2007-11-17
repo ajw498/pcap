@@ -319,6 +319,7 @@ _kernel_oserror *swi(int swi_no, _kernel_swi_regs *r, void *private_word)
 	case 0: return reinit_drivers();
 	case 1: return start_capture((char *)r->r[0], r->r[1]);
 	case 2: return stop_capture();
+	default: return error_BAD_SWI;
 	}
 	return NULL;
 }
