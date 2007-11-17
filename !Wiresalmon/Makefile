@@ -2,7 +2,7 @@
 CFLAGS = -c -IC: -throwback -zM -Wp
 LINKFLAGS = -rmf -o $@
 ASFLAGS = -throwback
-CMHGFLAGS = -d pcapmod.h -throwback
+CMHGFLAGS = -d wiresalmonmod.h -throwback
 
 DISTCC = distcc
 
@@ -12,10 +12,10 @@ CXXFLAGS = -Irtk: -Wall -mthrowback -mlibscl -O1 -mpoke-function-name
 
 LIBS = C:o.stubs
 
-all: pcap !RunImage
+all: Wiresalmon !RunImage
 
-pcap: pcap.o pcapmod.o pcapasm.o
-	link $(LINKFLAGS) pcap.o pcapmod.o pcapasm.o $(LIBS)
+Wiresalmon: wiresalmon.o wiresalmonmod.o wiresalmonasm.o
+	link $(LINKFLAGS) wiresalmon.o wiresalmonmod.o wiresalmonasm.o $(LIBS)
 
 !RunImage: frontend.o
 	$(CXX) $(CXXFLAGS) frontend.o -o $@ -lrtk:a.rtk
@@ -29,8 +29,9 @@ pcap: pcap.o pcapmod.o pcapasm.o
 %.o: %.cc
 	$(CXX) $(CXXFLAGS) -c -o $@ $<
 
-pcap.o: pcapmod.o
+wiresalmon.o: wiresalmonmod.o
 
-pcapmod.o:   cmhg.pcapmod
-	cmhg $(CMHGFLAGS)  cmhg.pcapmod -o pcapmod.o
+wiresalmonmod.o:   cmhg.wiresalmonmod
+	cdir o
+	cmhg $(CMHGFLAGS)  cmhg.wiresalmonmod -o wiresalmonmod.o
 

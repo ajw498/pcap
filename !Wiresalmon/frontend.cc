@@ -41,7 +41,7 @@
 #include "rtk/swi/wimp.h"
 
 #include "frontend.h"
-#include "pcapmod.h"
+#include "wiresalmonmod.h"
 
 using namespace rtk;
 

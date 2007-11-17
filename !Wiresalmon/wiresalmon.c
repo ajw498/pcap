@@ -10,7 +10,7 @@
 #include <time.h>
 
 
-#include "pcapmod.h"
+#include "wiresalmonmod.h"
 
 void semiprint(char *msg);
 
