@@ -74,7 +74,7 @@ wiresalmon::wiresalmon():
 
 	win.title("Wiresalmon");
 
-	filetype.sprite_name("file_fff");
+	filetype.sprite_name("file_ffd");
 	filetype.button(6);
 	filetype.xfit(false);
 	filetype.yfit(false);
@@ -99,6 +99,10 @@ void wiresalmon::handle_event(rtk::events::menu_selection& ev)
 	if (ev.target() == &ibhelp) {
 		os::Wimp_StartTask("Filer_Run <Wiresalmon$Dir>.!Help", 0);
 	} else if (ev.target() == &ibquit) {
+		if (stop.enabled()) {
+			stop.enabled(false);
+			stop_capture();
+		}
 		parent_application()->terminate();
 	}
 }
@@ -150,7 +154,7 @@ void wiresalmon::handle_event(rtk::events::mouse_click& ev)
 		}
 	} else if (ev.target() == &filetype) {
 		if (ev.buttons() & 0x40) {
-			filetype.drag_sprite(filetype.bbox(), (os::sprite_area*)1, "file_fff");
+			filetype.drag_sprite(filetype.bbox(), (os::sprite_area*)1, "file_ffd");
 		}
 	} else if ((ev.target() == &start) && (ev.buttons() == 4) && start.enabled()) {
 		if (pathname.text().find_first_of(".:<") == string::npos) {
@@ -186,6 +190,7 @@ int main(void)
 
 	wiresalmon app;
 	app.run();
+	app.kill_module();
 	return 0;
 }
 
@@ -204,5 +209,10 @@ void wiresalmon::stop_capture(void)
 	_kernel_oserror *err;
 	err = _swix(Wiresalmon_Stop, 0);
 	if (err) throw err->errmess;
+}
+
+void wiresalmon::kill_module(void)
+{
+	_swix(OS_Module, _INR(0,1), 4, "Wiresalmon");
 }
 

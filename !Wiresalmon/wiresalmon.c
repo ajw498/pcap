@@ -1,4 +1,25 @@
+/*
+	$Id$
 
+	Module code for controlling capture and saving captured data to disc.
+
+
+	Copyright (C) 2007 Alex Waugh
+	
+	This program is free software; you can redistribute it and/or modify
+	it under the terms of the GNU General Public License as published by
+	the Free Software Foundation; either version 2 of the License, or
+	(at your option) any later version.
+	
+	This program is distributed in the hope that it will be useful,
+	but WITHOUT ANY WARRANTY; without even the implied warranty of
+	MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+	GNU General Public License for more details.
+	
+	You should have received a copy of the GNU General Public License
+	along with this program; if not, write to the Free Software
+	Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+*/
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -15,7 +36,7 @@
 void semiprint(char *msg);
 
 static _kernel_oserror error_nomem = {0x58C80, "Out of memory"};
-static _kernel_oserror error_overflow = {0x58C81, "Buffer overflowed while capturing, some packets may have been dropped"};
+static _kernel_oserror error_overflow = {0x58C81, "Buffer overflowed while capturing, or error when writing file, some packets may have been dropped"};
 
 _kernel_oserror *claimswi(void *wkspc);
 _kernel_oserror *releaseswi(void);
@@ -178,7 +199,7 @@ _kernel_oserror *callback_handler(_kernel_swi_regs *r, void *pw)
 	(void)pw;
 
 	/* Turn inturrupts off while switching buffers, to ensure the
-	   SWI handler sees a consistant view */
+	   SWI handler sees a consistent view */
 	_swix(OS_IntOff,0);
 	if (sema) {
 		/* Prevent reentrancy */
@@ -208,7 +229,11 @@ _kernel_oserror *callback_handler(_kernel_swi_regs *r, void *pw)
 
 	/* Write data to file */
 	if (workspace.capturing) {
-		fwrite(start, 1, end - start, workspace.capturing);
+		size_t written;
+		written = fwrite(start, 1, end - start, workspace.capturing);
+		if (written < (end - start)) {
+			workspace.overflow = 1;
+		}
 	}
 	sema = 0;
 

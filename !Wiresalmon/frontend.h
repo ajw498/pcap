@@ -69,6 +69,7 @@ public:
 	writable_field pathname;
 	void start_capture(const char *filename);
 	void stop_capture(void);
+	void kill_module(void);
 private:
 	ibar_icon ibicon;
 	menu ibmenu;
