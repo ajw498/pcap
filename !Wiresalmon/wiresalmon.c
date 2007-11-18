@@ -264,7 +264,7 @@ static _kernel_oserror *start_capture(char *filename, int bufsize)
 
 	stop_capture();
 
-	if (bufsize == 0) bufsize = 256*1024;
+	if (bufsize == 0) bufsize = 512*1024;
 	databuffersize = bufsize;
 	databuffer1 = malloc(databuffersize);
 	if (databuffer1 == NULL) return &error_nomem;
