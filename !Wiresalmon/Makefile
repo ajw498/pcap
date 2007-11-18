@@ -1,8 +1,12 @@
+#
+#    $Id$
+#
 
-CFLAGS = -c -IC: -throwback -zM -Wp -fah
-LINKFLAGS = -rmf -o $@
-ASFLAGS = -throwback
-CMHGFLAGS = -d wiresalmonmod.h -throwback
+CC = gcc
+CFLAGS = -mlibscl -mthrowback -mmodule -Wall -O2 -mpoke-function-name
+
+CMHG = cmunge -32bit -tgcc
+CMHGFLAGS = -d wiresalmonmod.h
 
 DISTCC = distcc
 
@@ -10,21 +14,20 @@ CXX = $(DISTCC) g++
 
 CXXFLAGS = -Irtk: -Wall -mthrowback -mlibscl -O1 -mpoke-function-name
 
-LIBS = C:o.stubs
 
 all: Wiresalmon !RunImage
 
 Wiresalmon: wiresalmon.o wiresalmonmod.o wiresalmonasm.o
-	link $(LINKFLAGS) wiresalmon.o wiresalmonmod.o wiresalmonasm.o $(LIBS)
+	$(CC) $(CFLAGS) -o $@ wiresalmon.o wiresalmonmod.o wiresalmonasm.o
 
 !RunImage: frontend.o
 	$(CXX) $(CXXFLAGS) frontend.o -o $@ -lrtk:a.rtk
 
 %.o: %.s
-	objasm $(ASFLAGS) -o $@ $<
+	objasm -throwback -c -o $@ $<
 
 %.o: %.c
-	cc $(CFLAGS) -o $@ $<
+	$(CC) $(CFLAGS) -c -o $@ $<
 
 %.o: %.cc
 	$(CXX) $(CXXFLAGS) -c -o $@ $<
@@ -33,5 +36,5 @@ wiresalmon.o: wiresalmonmod.o
 
 wiresalmonmod.o:   cmhg.wiresalmonmod
 	cdir o
-	cmhg $(CMHGFLAGS)  cmhg.wiresalmonmod -o wiresalmonmod.o
+	$(CMHG) $(CMHGFLAGS)  cmhg.wiresalmonmod -o wiresalmonmod.o
 
