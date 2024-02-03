@@ -9,7 +9,10 @@ Wiresalmon does not itself provide any means of viewing the captured
 data.
 
 
-Wiresalmon is copyright © Alex Waugh 2007
+The Wiresalmon module is copyright © Alex Waugh 2007
+The Wiresalmon app is copyright © David Higton 2023, rewritten
+but copying the functionality of Alex Waugh's original as closely
+as possible
 
 This program is free software; you can redistribute it and/or modify
 it under the terms of the GNU General Public License as published by
@@ -26,8 +29,8 @@ along with this program; if not, write to the Free Software
 Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
 
 
-Using
------
+Using via the app
+-----------------
 
 Doubleclick !Wiresalmon to load the application and module. Click Select
 on the iconbar icon to open the capture control window.
@@ -43,29 +46,62 @@ When you wish to stop capturing, click Select on the stop capture
 button.
 
 
+Using via the command line
+--------------------------
+
+The Wiresalmon module implements two SWIs:
+
+Wiresalmon_Start (&58C80)
+On Entry  R0 -> filename to save to
+          R1 = buffer size (the normal usage is R1 = 0, which defaults
+               to 512 kiB)
+
+This SWI starts capture to the named file.
+
+If the module is already capturing, the first capture is stopped and
+the second capture started immediately.
+
+Wiresalmon_Stop (&58C81)
+On Entry  No parameters
+
+This SWI stops the capture and closes the file.
+
+
 Compatibility
 -------------
 
 Wiresalmon should work with any network card that provides a standard
-DCI4 driver. It has been tested with EtherK on an Iyonix and EtherX on a
-RiscPC with a Simtec Net100 NIC.
+DCI4 driver. It has been tested with EtherK on an Iyonix, EtherX on a
+RiscPC with a Simtec Net100 NIC, and EtherUSB on a Raspberry Pi.
+
+At time of writing (2023 October), Wiresalmon is NOT compatible with
+the new IPv6-capable Internet stack available from RISC OS Developments.
+Starting a capture causes an immediate crash.
 
 
 Limitations
 -----------
+
+See the preceding paragraph.
 
 When the Wiresalmon module is loaded or killed, it must reinitialise
 all the DCI4 drivers in order to insert or remove its hooks into the
 drivers. It is possible that some drivers may not cope very well with
 this, e.g. a ppp driver may drop its connection.
 
-Recieved packets are only captured if they are passed from the DCI4
+Received packets are only captured if they are passed from the DCI4
 driver to a higher level protocol module. If no protocol module has
 registered an interest in the packet type, then Wiresalmon will not
 capture the packet. If the network hardware filters out packets then
 these packets will not be seen by Wiresalmon.
 
 
+Changes
+-------
+
+2023 October/November David Higton: Module slightly updated to run on
+  modern machines.  New app written, using Toolbox.
+
+
 Any future updates to Wiresalmon will be available from
 http://www.alexwaugh.com/
-

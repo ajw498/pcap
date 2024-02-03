@@ -5,26 +5,27 @@
 ;
 ;
 ;	Copyright (C) 2007 Alex Waugh
-;	
+;
 ;	This program is free software; you can redistribute it and/or modify
 ;	it under the terms of the GNU General Public License as published by
 ;	the Free Software Foundation; either version 2 of the License, or
 ;	(at your option) any later version.
-;	
+;
 ;	This program is distributed in the hope that it will be useful,
 ;	but WITHOUT ANY WARRANTY; without even the implied warranty of
 ;	MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 ;	GNU General Public License for more details.
-;	
+;
 ;	You should have received a copy of the GNU General Public License
 ;	along with this program; if not, write to the Free Software
 ;	Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+;
+;	Updated 2023-11-03 David Higton
 
 
 MAX_DRIVERS	EQU	10
 MAX_CLAIMS	EQU	20
 
-DRIVER_SIZE	EQU	12
 
 ; Offsets within workspace struct
 WRITEPTR	EQU	0
@@ -38,14 +39,18 @@ NUMRXCLAIMS	EQU	DRIVERS + DRIVER_SIZE * MAX_DRIVERS
 RXCLAIMS	EQU	NUMRXCLAIMS + 4
 
 ; Offsets within an mbuf header
-MBUF_NEXT	EQU	0
-MBUF_LIST	EQU	4
-MBUF_OFF	EQU	8
-MBUF_LEN	EQU	12
+		^ 0
+MBUF_NEXT	#	4
+MBUF_LIST	#	4
+MBUF_OFF	#	4
+MBUF_LEN	#	0
 
 ; Offsets within drivers struct
-DRIVER_SWIBASE	EQU	0
-DRIVER_MAC	EQU	4
+		^ 0
+DRIVER_SWIBASE	#	4
+DRIVER_MAC	#	6
+DRIVER_PAD	#	2
+DRIVER_SIZE	#	0
 
 XOS_ClaimProcessorVector	EQU	&69+&20000
 
@@ -60,7 +65,7 @@ workspace	DCD	0
 ; a1 = ptr to workspace struct
 ; Returns error block ptr, or 0
 claimswi
-	STMFD	sp!, {lr}
+	STR	lr, [sp, #-4]!
 	MOV	a4, a1
 	; Save workspace ptr, so SWI handler can access it
 	LDR	a1, =|workspace|
@@ -72,13 +77,13 @@ claimswi
 	SWI	XOS_ClaimProcessorVector
 	STRVC	a2, [a4, #OLDSWIHANDLER]
 	MOVVC	a1, #0
-	LDMFD	sp!, {pc}
+	LDR	pc, [sp], #4
 
 	EXPORT	|releaseswi|
 ; Release the SWI vector
 ; Returns error block ptr, or 0
 releaseswi
-	STMFD	sp!, {lr}
+	STR	lr, [sp, #-4]!
 	LDR	a4, =|workspace|
 	LDR	a4, [a4]
 
@@ -88,7 +93,7 @@ releaseswi
 	SWI	XOS_ClaimProcessorVector
 	MOVVC	a1, #0
 	STRVC	a1, [a4, #OLDSWIHANDLER]
-	LDMFD	sp!, {pc}
+	LDR	pc, [sp], #4
 
 
 ; a1 = dest
@@ -154,9 +159,10 @@ chainend
 ; The SWI vector handler
 ; Called in SVC32 mode, IRQs off
 swihandler
-	STMFD	sp!, {r0-r12, lr, pc}
+	STR	pc, [sp, #-4]!
+	STMFD	sp!,{r0-r12, lr}
 	MRS	r0, CPSR
-	STMFD	sp!,{r0}
+	STR	r0, [sp, #-4]!
 
 	LDR	v1, =|workspace|
 	LDR	v1, [v1]
@@ -267,9 +273,10 @@ filterswi
 	STR	a4, [sp, #7*4]
 
 swiexit
-	LDMFD	sp!, {r0}
+	LDR	r0, [sp], #4
 	MSR	CPSR_cxsf, r0
-	LDMFD	sp!, {r0-r12, lr, pc}
+	LDMFD	sp!, {r0-r12, lr}
+	LDR	pc, [sp], #4
 
 ; a1 = frame type
 ; a2 = mbuf chain
@@ -303,7 +310,7 @@ outputtxchain
 
 	; Copy source address
 	ADD	a1, v4, #22
-	ADR	a2, v2
+	MOV	a2, v2
 	MOV	a3, #6
 	BL	memcpy
 
@@ -331,7 +338,8 @@ txhdroverflow
 ; a2 = ptr to mbuf chains
 ; r12 = private word
 rxcall
-	STMFD	sp!, {r0-r12,lr,pc}
+	STR	pc, [sp, #-4]!
+	STMFD	sp!, {r0-r12, lr}
 	MOV	v1, a2
 
 	LDR	a1, [r12, #0] ; New r12
@@ -354,7 +362,8 @@ rxlistloop
 	B	rxlistloop
 
 rxexit
-	LDMFD	sp!, {r0-r12, lr, pc}
+	LDMFD	sp!, {r0-r12, lr}
+	LDR	pc, [sp], #4
 
 
 ; a1 = ptr to mbuf chain
@@ -391,9 +400,9 @@ outputrxchain
 	BL	memcpy
 
 	; Frame type
-	LDR	a3, [v2, #24]
+	LDRB	a3, [v2, #24]
 	STRB	a3, [v4, #29]
-	LDR	a3, [v2, #25]
+	LDRB	a3, [v2, #25]
 	STRB	a3, [v4, #28]
 
 	LDR	a1, [v1, #MBUF_NEXT] ; Next mbuf in chain, contains the payload

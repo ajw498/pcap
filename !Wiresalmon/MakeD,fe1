@@ -1,0 +1,47 @@
+# Project:   Wiresalmon
+
+
+# Toolflags:
+CMHG        = cmhg
+CCflags     = -c -IC: -throwback -DDebug
+LinkflagsA  = -aif -c -o $@
+LinkFlagsM  = -rmf
+LibsA       = C:Stubs.o \
+              C:tboxlibs.toolboxlib.o C:tboxlibs.wimplib.o \
+              C:tboxlibs.eventlib.o
+LibsM       = C:Stubs.o
+Files       = o.Main o.Error
+
+
+# Final targets:
+all: Runimage Wiresalmon
+
+RunImage:   $(Files)
+        link $(LinkFlagsA) $(LibsA) $(Files)
+
+o.Main: c.Main h.Defs
+	cc $(CCflags) c.Main -o o.Main
+
+o.Error: c.Error h.Error
+	cc $(CCflags) c.Error -o o.Error
+
+Wiresalmon: wiresalmon.o wiresalmonmod.o wiresalmonasm.o
+	link $(LinkFlagsM) -o $@ wiresalmonmod.o \
+	wiresalmon.o wiresalmonasm.o $(LibsM)
+
+o.wiresalmonasm: s.wiresalmonasm
+	objasm -throwback s.wiresalmonasm o.wiresalmonasm
+
+o.wiresalmon: c.wiresalmon
+	cc $(CCFLAGS) -zM c.wiresalmon -o o.wiresalmon
+
+wiresalmonmod.o:   cmhg.wiresalmonmod
+	$(CMHG) $(CMHGFLAGS)  cmhg.wiresalmonmod -o wiresalmonmod.o
+
+# User-editable dependencies:
+
+
+# Static dependencies:
+
+
+# Dynamic dependencies:

@@ -5,17 +5,18 @@
 
 
 	Copyright (C) 2007 Alex Waugh
-	
+	Updated 2023 by David Higton to run on more recent machines
+
 	This program is free software; you can redistribute it and/or modify
 	it under the terms of the GNU General Public License as published by
 	the Free Software Foundation; either version 2 of the License, or
 	(at your option) any later version.
-	
+
 	This program is distributed in the hope that it will be useful,
 	but WITHOUT ANY WARRANTY; without even the implied warranty of
 	MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 	GNU General Public License for more details.
-	
+
 	You should have received a copy of the GNU General Public License
 	along with this program; if not, write to the Free Software
 	Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
@@ -26,9 +27,9 @@
 #include <string.h>
 #include <stddef.h>
 #include <ctype.h>
+#include <time.h>
 #include <swis.h>
 #include <kernel.h>
-#include <time.h>
 
 
 #include "wiresalmonmod.h"
@@ -37,12 +38,14 @@ void semiprint(char *msg);
 
 static _kernel_oserror error_nomem = {0x58C80, "Out of memory"};
 static _kernel_oserror error_overflow = {0x58C81, "Buffer overflowed while capturing, or error when writing file, some packets may have been dropped"};
+static void* private_word;
+static unsigned int last_csec; /* Last monotonic time, centiseconds */
 
 _kernel_oserror *claimswi(void *wkspc);
 _kernel_oserror *releaseswi(void);
 
 
-typedef struct pcap_hsr_s {
+typedef struct pcap_hdr_s {
 	unsigned magic_number;
 	unsigned version_major:16;
 	unsigned version_minor:16;
@@ -172,10 +175,17 @@ _kernel_oserror *callevery_handler(_kernel_swi_regs *r, void *pw)
 {
 	(void)r;
 	(void)pw;
+	unsigned int now;
+	unsigned int tdiff;
 
 	/* Increment timestamp */
-	workspace.rechdr.ts_usec += 20000;
-	if (workspace.rechdr.ts_usec > 1000000) {
+	_swix (OS_ReadMonotonicTime, _OUT(0), &now);
+	tdiff = now - last_csec;
+	last_csec = now;
+	workspace.rechdr.ts_usec += (tdiff * 10000);
+	/* Do mod and div operations - quicker that division because
+	   only 0 or 1 times round the loop normally */
+	while (workspace.rechdr.ts_usec > 1000000) {
 		workspace.rechdr.ts_usec -= 1000000;
 		workspace.rechdr.ts_sec += 1;
 	}
@@ -222,7 +232,7 @@ _kernel_oserror *callback_handler(_kernel_swi_regs *r, void *pw)
 	}
 	if (workspace.overflow) {
 		/* Drop whole packets */
-		end = start; 
+		end = start;
 	}
 	/* Reenable interrupts before doing I/O */
 	_swix(OS_IntOn,0);
@@ -244,6 +254,9 @@ static _kernel_oserror *stop_capture(void)
 {
 	FILE *file = workspace.capturing;
 
+	_swix(OS_RemoveTickerEvent, _INR(0,1), callevery, private_word);
+	_swix(OS_RemoveCallBack, _INR(0,1), callback, private_word);
+
 	/* Ensure capturing has stopped before closing the file */
 	workspace.capturing = NULL;
 	if (file) fclose(file);
@@ -259,10 +272,20 @@ static _kernel_oserror *stop_capture(void)
 
 static _kernel_oserror *start_capture(char *filename, int bufsize)
 {
+	_kernel_oserror *err;
 	FILE *file;
 	pcap_hdr_t hdr;
 
-	stop_capture();
+	/* Only call stop_capture if it really is capturing */
+	if (workspace.capturing != NULL) {
+		stop_capture();
+	}
+
+	err = _swix(OS_CallEvery, _INR(0,2), 1, callevery, private_word);
+	if (err) {
+		releaseswi();
+		return err;
+	}
 
 	if (bufsize == 0) bufsize = 512*1024;
 	databuffersize = bufsize;
@@ -279,6 +302,13 @@ static _kernel_oserror *start_capture(char *filename, int bufsize)
 	if (file == NULL) {
 		return _kernel_last_oserror();
 	}
+	/* Turn off buffering */
+	setbuf(file, NULL);
+
+	/* Set the capture time */
+	workspace.rechdr.ts_sec = time(NULL);
+	workspace.rechdr.ts_usec = 0;
+	_swix (OS_ReadMonotonicTime, _OUT(0), &last_csec);
 
 	/* Write the pcap file header */
 	hdr.magic_number = 0xa1b2c3d4;
@@ -306,7 +336,7 @@ _kernel_oserror *finalise(int fatal, int podule, void *private_word)
 	stop_capture();
 
 	_swix(OS_RemoveTickerEvent, _INR(0,1), callevery, private_word);
-	_swix(OS_RemoveTickerEvent, _INR(0,1), callback, private_word);
+	_swix(OS_RemoveCallBack, _INR(0,1), callback, private_word);
 
 	err = releaseswi();
 	if (err) return err;
@@ -317,13 +347,14 @@ _kernel_oserror *finalise(int fatal, int podule, void *private_word)
 	return NULL;
 }
 
-_kernel_oserror *initialise(const char *cmd_tail, int podule_base, void *private_word)
+_kernel_oserror *initialise(const char *cmd_tail, int podule_base, void *pw)
 {
 	_kernel_oserror *err;
 
 	(void)cmd_tail;
 	(void)podule_base;
 
+	private_word = pw;
 	workspace.rechdr.ts_sec = time(NULL);
 	workspace.rechdr.ts_usec = 0;
 	memset(&workspace.drivers, 0, sizeof(struct driver) * MAX_DRIVERS);
@@ -339,19 +370,13 @@ _kernel_oserror *initialise(const char *cmd_tail, int podule_base, void *private
 
 	if (err) return err;
 
-	err = _swix(OS_CallEvery, _INR(0,2), 1, callevery, private_word);
-	if (err) {
-		releaseswi();
-		return err;
-	}
-
 	/* Reinitialise all drivers, so we can insert our hook into the rx call */
 	reinit_drivers();
 
 	return 0;
 }
 
-_kernel_oserror *swi(int swi_no, _kernel_swi_regs *r, void *private_word)
+_kernel_oserror *swi(int swi_no, _kernel_swi_regs *r, void *pw)
 {
 	(void)private_word;
 
